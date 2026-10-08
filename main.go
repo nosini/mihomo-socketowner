@@ -1,9 +1,11 @@
 // Command mihomo-sockowner attaches the socket-owner BPF programs to a cgroup
 // and pins them, so that mihomo can look up the process behind a connection
-// without holding BPF privileges itself.
+// without holding BPF privileges itself. With -exec-paths it also records the
+// executable of every process, so mihomo needn't read /proc to name it.
 //
 // It needs CAP_BPF and CAP_NET_ADMIN (or root), plus CAP_CHOWN for
-// -reader-user and -reader-group, and exits after attaching. The links pinned
+// -reader-user and -reader-group and CAP_PERFMON for -exec-paths, and exits
+// after attaching. The links pinned
 // in <pin>/links keep the programs attached until "detach" removes them. The
 // map is pinned on its own in <pin>/maps, so that directory can be shared with
 // mihomo without exposing the links. Both directories are kept across attach
@@ -12,7 +14,9 @@ package main
 
 //go:generate clang -O2 -g -Wall -target bpfel -c bpf/sockowner.c -o sockowner_bpfel.o
 //go:generate clang -O2 -g -Wall -target bpfeb -c bpf/sockowner.c -o sockowner_bpfeb.o
-//go:generate llvm-strip -g sockowner_bpfel.o sockowner_bpfeb.o
+//go:generate clang -O2 -g -Wall -target bpfel -c bpf/execpath.c -o execpath_bpfel.o
+//go:generate clang -O2 -g -Wall -target bpfeb -c bpf/execpath.c -o execpath_bpfeb.o
+//go:generate llvm-strip -g sockowner_bpfel.o sockowner_bpfeb.o execpath_bpfel.o execpath_bpfeb.o
 
 import (
 	"bytes"
@@ -21,6 +25,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -35,15 +40,23 @@ var (
 	objectLE []byte
 	//go:embed sockowner_bpfeb.o
 	objectBE []byte
+	//go:embed execpath_bpfel.o
+	execObjectLE []byte
+	//go:embed execpath_bpfeb.o
+	execObjectBE []byte
 )
 
 const mapName = "conn_owners"
+
+// The exec-path maps, which mihomo looks for next to mapName.
+var execMapNames = []string{"exec_tasks", "exec_recent"}
 
 func main() {
 	cgroup := flag.String("cgroup", "/sys/fs/cgroup", "cgroup v2 directory to attach to")
 	pin := flag.String("pin", "/sys/fs/bpf/mihomo", "bpffs directory for the pinned links and map")
 	readerUser := flag.String("reader-user", "", "user given read access to the pinned map (name or ID)")
 	readerGroup := flag.String("reader-group", "", "group given read access to the pinned map (name or ID)")
+	execPaths := flag.Bool("exec-paths", false, "also record each process's executable (needs CAP_PERFMON and the BPF LSM)")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: %s [flags] attach|detach\n", os.Args[0])
 		flag.PrintDefaults()
@@ -55,7 +68,7 @@ func main() {
 	case "attach":
 		var uid, gid int
 		if uid, gid, err = lookupReader(*readerUser, *readerGroup); err == nil {
-			err = attach(*cgroup, *pin, uid, gid)
+			err = attach(*cgroup, *pin, *execPaths, uid, gid)
 		}
 	case "detach":
 		err = detach(*pin)
@@ -94,23 +107,38 @@ func lookupReader(name, group string) (uid, gid int, err error) {
 	return uid, gid, nil
 }
 
-func object() []byte {
+func nativeObject(le, be []byte) []byte {
 	if binary.NativeEndian.Uint16([]byte{1, 0}) == 1 {
-		return objectLE
+		return le
 	}
-	return objectBE
+	return be
 }
 
-func attach(cgroup, pin string, uid, gid int) error {
-	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(object()))
+func load(object []byte) (*ebpf.CollectionSpec, *ebpf.Collection, error) {
+	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(object))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	coll, err := ebpf.NewCollection(spec)
 	if err != nil {
-		return fmt.Errorf("load: %w", err)
+		return nil, nil, fmt.Errorf("load: %w", err)
+	}
+	return spec, coll, nil
+}
+
+func attach(cgroup, pin string, execPaths bool, uid, gid int) error {
+	spec, coll, err := load(nativeObject(objectLE, objectBE))
+	if err != nil {
+		return err
 	}
 	defer coll.Close()
+	var execColl *ebpf.Collection
+	if execPaths {
+		if _, execColl, err = load(nativeObject(execObjectLE, execObjectBE)); err != nil {
+			return fmt.Errorf("exec paths: %w", err)
+		}
+		defer execColl.Close()
+	}
 
 	// Replace an earlier attachment as a whole. mihomo notices the new map
 	// pin and reopens it.
@@ -148,12 +176,64 @@ func attach(cgroup, pin string, uid, gid int) error {
 		}
 	}
 
+	if execColl != nil {
+		if err := attachExec(execColl, links, maps, uid, gid); err != nil {
+			detach(pin)
+			return err
+		}
+	}
+
+	// Pinned last: mihomo looks for the exec-path maps when it notices a
+	// new socket-owner map.
 	mapPath := filepath.Join(maps, mapName)
 	if err := coll.Maps[mapName].Pin(mapPath); err != nil {
 		detach(pin)
 		return fmt.Errorf("pin %s: %w", mapName, err)
 	}
 	return setReader(mapPath, 0o440, uid, gid)
+}
+
+// attachExec attaches the exec-path hooks, adds the processes that are already
+// running and pins the maps.
+func attachExec(coll *ebpf.Collection, links, maps string, uid, gid int) error {
+	for _, name := range []string{"record_exec", "record_fork", "record_free"} {
+		l, err := link.AttachLSM(link.LSMOptions{Program: coll.Programs[name]})
+		if err != nil {
+			return fmt.Errorf("attach %s: %w", name, err)
+		}
+		err = l.Pin(filepath.Join(links, name))
+		l.Close()
+		if err != nil {
+			return fmt.Errorf("pin %s: %w", name, err)
+		}
+	}
+
+	// Each read of the iterator runs seed_tasks on the next process.
+	it, err := link.AttachIter(link.IterOptions{Program: coll.Programs["seed_tasks"]})
+	if err != nil {
+		return fmt.Errorf("attach seed_tasks: %w", err)
+	}
+	defer it.Close()
+	r, err := it.Open()
+	if err != nil {
+		return fmt.Errorf("seed_tasks: %w", err)
+	}
+	_, err = io.Copy(io.Discard, r)
+	r.Close()
+	if err != nil {
+		return fmt.Errorf("seed_tasks: %w", err)
+	}
+
+	for _, name := range execMapNames {
+		path := filepath.Join(maps, name)
+		if err := coll.Maps[name].Pin(path); err != nil {
+			return fmt.Errorf("pin %s: %w", name, err)
+		}
+		if err := setReader(path, 0o440, uid, gid); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // setReader gives path to root, or to uid and gid where they are set, with
