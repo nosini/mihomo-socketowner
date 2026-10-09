@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cilium/ebpf"
@@ -34,6 +36,7 @@ func TestObjects(t *testing.T) {
 				"sendmsg4":    ebpf.AttachCGroupUDP4Sendmsg,
 				"sendmsg6":    ebpf.AttachCGroupUDP6Sendmsg,
 				"egress":      ebpf.AttachCGroupInetEgress,
+				sendProgram:   ebpf.AttachLSMMac,
 			}
 			if len(spec.Programs) != len(want) {
 				t.Fatalf("%d programs", len(spec.Programs))
@@ -41,6 +44,12 @@ func TestObjects(t *testing.T) {
 			for name, attach := range want {
 				if p := spec.Programs[name]; p == nil || p.AttachType != attach {
 					t.Errorf("program %s: %+v", name, p)
+				}
+			}
+			// attach loads only the cgroup programs without -exec-paths.
+			for name, p := range spec.Programs {
+				if (p.Type == ebpf.LSM) != (name == sendProgram) {
+					t.Errorf("program %s has type %v", name, p.Type)
 				}
 			}
 			m := spec.Maps[mapName]
@@ -100,5 +109,27 @@ func TestExecObjects(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A reader must be able to pass through the pin directory to the maps, also
+// when an earlier version created it for root alone; the links stay root's.
+func TestMakePinDirs(t *testing.T) {
+	pin := filepath.Join(t.TempDir(), "mihomo")
+	if err := os.Mkdir(pin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	links, maps, err := makePinDirs(pin, os.Getuid(), os.Getgid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for dir, want := range map[string]os.FileMode{pin: 0o711, links: 0o700, maps: 0o750} {
+		fi, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != want {
+			t.Errorf("%s: mode %v, want %v", dir, fi.Mode().Perm(), want)
+		}
 	}
 }

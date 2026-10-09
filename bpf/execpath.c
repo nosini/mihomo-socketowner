@@ -144,13 +144,17 @@ int BPF_PROG(record_exec, struct linux_binprm *bprm)
 }
 
 // Called for every new task before it gets its ID. The hook decides whether
-// the fork may go ahead, so it must always return 0.
+// the fork may go ahead: ret is the verdict of the BPF LSM programs that ran
+// before this one, which must stand, and this one never denies.
 SEC("lsm/task_alloc")
-int BPF_PROG(record_fork, struct task_struct *task, unsigned long clone_flags)
+int BPF_PROG(record_fork, struct task_struct *task, unsigned long clone_flags,
+	     int ret)
 {
 	struct task_struct *parent = bpf_get_current_task_btf()->group_leader;
 	struct exec_path *e;
 
+	if (ret)
+		return ret;
 	if (clone_flags & CLONE_THREAD)
 		return 0;
 	e = bpf_task_storage_get(&exec_tasks, parent, 0, 0);

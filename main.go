@@ -10,6 +10,8 @@
 // map is pinned on its own in <pin>/maps, so that directory can be shared with
 // mihomo without exposing the links. Both directories are kept across attach
 // and detach, so a bind mount of maps sees the map that replaces an old one.
+// <pin> itself can be passed through by anyone, so that a reader that can
+// reach <pin> can open the maps.
 package main
 
 //go:generate clang -O2 -g -Wall -target bpfel -c bpf/sockowner.c -o sockowner_bpfel.o
@@ -47,6 +49,10 @@ var (
 )
 
 const mapName = "conn_owners"
+
+// The LSM program in the socket-owner object, which is only loaded with
+// -exec-paths: like execpath.c, it needs CAP_PERFMON and the BPF LSM.
+const sendProgram = "record_send"
 
 // The exec-path maps, which mihomo looks for next to mapName.
 var execMapNames = []string{"exec_tasks", "exec_recent"}
@@ -114,10 +120,14 @@ func nativeObject(le, be []byte) []byte {
 	return be
 }
 
-func load(object []byte) (*ebpf.CollectionSpec, *ebpf.Collection, error) {
+// load loads the programs in object except those named in without.
+func load(object []byte, without ...string) (*ebpf.CollectionSpec, *ebpf.Collection, error) {
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(object))
 	if err != nil {
 		return nil, nil, err
+	}
+	for _, name := range without {
+		delete(spec.Programs, name)
 	}
 	coll, err := ebpf.NewCollection(spec)
 	if err != nil {
@@ -127,7 +137,11 @@ func load(object []byte) (*ebpf.CollectionSpec, *ebpf.Collection, error) {
 }
 
 func attach(cgroup, pin string, execPaths bool, uid, gid int) error {
-	spec, coll, err := load(nativeObject(objectLE, objectBE))
+	var without []string
+	if !execPaths {
+		without = append(without, sendProgram)
+	}
+	spec, coll, err := load(nativeObject(objectLE, objectBE), without...)
 	if err != nil {
 		return err
 	}
@@ -145,25 +159,22 @@ func attach(cgroup, pin string, execPaths bool, uid, gid int) error {
 	if err := detach(pin); err != nil {
 		return err
 	}
-	links := filepath.Join(pin, "links")
-	maps := filepath.Join(pin, "maps")
-	if err := os.MkdirAll(links, 0o700); err != nil {
-		return err
-	}
-	if err := os.Mkdir(maps, 0o750); err != nil && !errors.Is(err, os.ErrExist) {
-		return err
-	}
-	// Mkdir doesn't change an existing directory, so set its mode explicitly.
-	if err := setReader(maps, 0o750, uid, gid); err != nil {
+	links, maps, err := makePinDirs(pin, uid, gid)
+	if err != nil {
 		return err
 	}
 
 	for name, prog := range coll.Programs {
-		l, err := link.AttachCgroup(link.CgroupOptions{
-			Path:    cgroup,
-			Attach:  spec.Programs[name].AttachType,
-			Program: prog,
-		})
+		var l link.Link
+		if spec.Programs[name].Type == ebpf.LSM {
+			l, err = link.AttachLSM(link.LSMOptions{Program: prog})
+		} else {
+			l, err = link.AttachCgroup(link.CgroupOptions{
+				Path:    cgroup,
+				Attach:  spec.Programs[name].AttachType,
+				Program: prog,
+			})
+		}
 		if err != nil {
 			detach(pin)
 			return fmt.Errorf("attach %s: %w", name, err)
@@ -191,6 +202,34 @@ func attach(cgroup, pin string, execPaths bool, uid, gid int) error {
 		return fmt.Errorf("pin %s: %w", mapName, err)
 	}
 	return setReader(mapPath, 0o440, uid, gid)
+}
+
+// makePinDirs creates the directories for the links and maps in pin and
+// gives the maps directory to the reader. The reader must be able to pass
+// through pin, while the links directory stays root's alone. MkdirAll and
+// Mkdir don't change existing directories, so their modes are set
+// explicitly.
+func makePinDirs(pin string, uid, gid int) (links, maps string, err error) {
+	links = filepath.Join(pin, "links")
+	maps = filepath.Join(pin, "maps")
+	if err := os.MkdirAll(pin, 0o711); err != nil {
+		return "", "", err
+	}
+	if err := os.Chmod(pin, 0o711); err != nil {
+		return "", "", err
+	}
+	for _, dir := range []string{links, maps} {
+		if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+			return "", "", err
+		}
+	}
+	if err := os.Chmod(links, 0o700); err != nil {
+		return "", "", err
+	}
+	if err := setReader(maps, 0o750, uid, gid); err != nil {
+		return "", "", err
+	}
+	return links, maps, nil
 }
 
 // attachExec attaches the exec-path hooks, adds the processes that are already
