@@ -8,11 +8,11 @@
 // protocol, source address and source port, as taken from each outgoing
 // packet. Entries outlive the socket and are evicted least-recently-used.
 //
-// The cgroup programs use only UAPI context structures, so they need no BTF
-// relocations. They avoid helpers that need CAP_PERFMON (such as
-// bpf_get_current_comm), so loading them needs only CAP_BPF and CAP_NET_ADMIN.
-// record_send is an LSM program, which needs CAP_PERFMON and the BPF LSM; the
-// loader only loads it along with execpath.c.
+// Only UAPI context structures are used, so the object needs no BTF
+// relocations. The programs avoid helpers that need CAP_PERFMON (such as
+// bpf_get_current_comm), so loading needs only CAP_BPF and CAP_NET_ADMIN.
+// Sends on a connected socket don't run the cgroup hooks; with -exec-paths,
+// LSM programs in execpath.c record those.
 //
 // Build: go generate in the repository root, which needs clang and the libbpf headers.
 
@@ -20,10 +20,8 @@
 #include <linux/in.h>
 #include <linux/socket.h>
 #include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
 
-#define AF_INET 2
-#define AF_INET6 10
+#include "sockowner.h"
 
 struct conn_key {
 	__u64 netns;
@@ -33,48 +31,12 @@ struct conn_key {
 	__u8 pad[5];
 };
 
-struct conn_owner {
-	__u32 tgid;
-	__u32 uid;
-	__u64 boot_ns; // CLOCK_BOOTTIME when the owner was recorded
-};
-
-struct sock_owner {
-	struct conn_owner owner;
-	__u64 netns;
-};
-
-struct {
-	__uint(type, BPF_MAP_TYPE_SK_STORAGE);
-	__uint(map_flags, BPF_F_NO_PREALLOC);
-	__type(key, int);
-	__type(value, struct sock_owner);
-} sock_owners SEC(".maps");
-
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 65536);
 	__type(key, struct conn_key);
 	__type(value, struct conn_owner);
 } conn_owners SEC(".maps");
-
-static __always_inline int tracked_protocol(__u32 protocol)
-{
-	return protocol == IPPROTO_TCP || protocol == IPPROTO_UDP;
-}
-
-// Keeps the time of an owner that is recorded again, which must stay before
-// the process exits for mihomo to accept it.
-static __always_inline void record_current(struct sock_owner *so)
-{
-	__u32 tgid = bpf_get_current_pid_tgid() >> 32;
-
-	if (so->owner.tgid == tgid && so->owner.boot_ns)
-		return;
-	so->owner.tgid = tgid;
-	so->owner.uid = (__u32)bpf_get_current_uid_gid();
-	so->owner.boot_ns = bpf_ktime_get_boot_ns();
-}
 
 SEC("cgroup/sock_create")
 int sock_create(struct bpf_sock *sk)
@@ -97,7 +59,7 @@ int sock_create(struct bpf_sock *sk)
 // socket, which may differ from its creator when the socket was inherited or
 // passed over a UNIX socket. They also cover sockets created before the
 // programs were attached. Sends on a connected socket skip the sendmsg hooks;
-// record_send covers those.
+// record_send in execpath.c covers those.
 static __always_inline int record_sock_addr(struct bpf_sock_addr *ctx)
 {
 	struct bpf_sock *sk = ctx->sk;
@@ -136,47 +98,6 @@ SEC("cgroup/sendmsg6")
 int sendmsg6(struct bpf_sock_addr *ctx)
 {
 	return record_sock_addr(ctx);
-}
-
-// Kernel structures for record_send, reduced to the fields used here. The
-// loader relocates field offsets against the running kernel's BTF.
-struct sock_common {
-	unsigned short skc_family;
-} __attribute__((preserve_access_index));
-
-struct sock {
-	struct sock_common __sk_common;
-	__u16 sk_protocol;
-} __attribute__((preserve_access_index));
-
-struct socket {
-	struct sock *sk;
-} __attribute__((preserve_access_index));
-
-struct msghdr;
-
-// Runs in the sending process for every send, write or splice on a socket,
-// connected or not, before the data goes out. ret is the verdict of the BPF
-// LSM programs that ran before this one; a denial must stand.
-SEC("lsm/socket_sendmsg")
-int BPF_PROG(record_send, struct socket *sock, struct msghdr *msg, int size,
-	     int ret)
-{
-	struct sock *sk = sock->sk;
-	struct sock_owner *so;
-
-	if (ret)
-		return ret;
-	if (!sk ||
-	    (sk->__sk_common.skc_family != AF_INET &&
-	     sk->__sk_common.skc_family != AF_INET6) ||
-	    !tracked_protocol(sk->sk_protocol))
-		return 0;
-	so = bpf_sk_storage_get(&sock_owners, sk, 0,
-				BPF_SK_STORAGE_GET_F_CREATE);
-	if (so)
-		record_current(so);
-	return 0;
 }
 
 SEC("cgroup_skb/egress")

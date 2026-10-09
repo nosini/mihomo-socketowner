@@ -4,14 +4,14 @@
 // executable of every process, so mihomo needn't read /proc to name it.
 //
 // It needs CAP_BPF and CAP_NET_ADMIN (or root), plus CAP_CHOWN for
-// -reader-user and -reader-group and CAP_PERFMON for -exec-paths, and exits
-// after attaching. The links pinned
-// in <pin>/links keep the programs attached until "detach" removes them. The
-// map is pinned on its own in <pin>/maps, so that directory can be shared with
-// mihomo without exposing the links. Both directories are kept across attach
+// -reader-group and CAP_PERFMON for -exec-paths, and exits after attaching.
+// The links pinned in <pin>/links keep the programs attached until "detach"
+// removes them. The map is pinned on its own in <pin>/maps, so that directory
+// can be shared with mihomo without exposing the links. Both directories are kept across attach
 // and detach, so a bind mount of maps sees the map that replaces an old one.
 // <pin> itself can be passed through by anyone, so that a reader that can
-// reach <pin> can open the maps.
+// reach <pin> can open the maps. The pins stay the loader's: a reader that
+// owned them could make them writable and forge entries.
 package main
 
 //go:generate clang -O2 -g -Wall -target bpfel -c bpf/sockowner.c -o sockowner_bpfel.o
@@ -50,18 +50,19 @@ var (
 
 const mapName = "conn_owners"
 
-// The LSM program in the socket-owner object, which is only loaded with
-// -exec-paths: like execpath.c, it needs CAP_PERFMON and the BPF LSM.
-const sendProgram = "record_send"
+// The socket storage that both objects record socket owners in.
+const sockMapName = "sock_owners"
 
 // The exec-path maps, which mihomo looks for next to mapName.
 var execMapNames = []string{"exec_tasks", "exec_recent"}
 
+// The LSM programs in the exec-path object; seed_tasks is run, not attached.
+var execPrograms = []string{"record_exec", "record_fork", "record_free", "record_send", "record_connect"}
+
 func main() {
 	cgroup := flag.String("cgroup", "/sys/fs/cgroup", "cgroup v2 directory to attach to")
 	pin := flag.String("pin", "/sys/fs/bpf/mihomo", "bpffs directory for the pinned links and map")
-	readerUser := flag.String("reader-user", "", "user given read access to the pinned map (name or ID)")
-	readerGroup := flag.String("reader-group", "", "group given read access to the pinned map (name or ID)")
+	readerGroup := flag.String("reader-group", "", "group given read access to the pinned maps (name or ID)")
 	execPaths := flag.Bool("exec-paths", false, "also record each process's executable (needs CAP_PERFMON and the BPF LSM)")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "usage: %s [flags] attach|detach\n", os.Args[0])
@@ -72,9 +73,9 @@ func main() {
 	var err error
 	switch flag.Arg(0) {
 	case "attach":
-		var uid, gid int
-		if uid, gid, err = lookupReader(*readerUser, *readerGroup); err == nil {
-			err = attach(*cgroup, *pin, *execPaths, uid, gid)
+		var gid int
+		if gid, err = lookupGroup(*readerGroup); err == nil {
+			err = attach(*cgroup, *pin, *execPaths, gid)
 		}
 	case "detach":
 		err = detach(*pin)
@@ -88,29 +89,19 @@ func main() {
 	}
 }
 
-// lookupReader returns the IDs to own the pinned map and its directory, or -1
-// to leave them to root.
-func lookupReader(name, group string) (uid, gid int, err error) {
-	uid, gid = -1, -1
-	if name != "" {
-		u, err := user.Lookup(name)
-		if err != nil {
-			if u, err = user.LookupId(name); err != nil {
-				return 0, 0, err
-			}
-		}
-		uid, _ = strconv.Atoi(u.Uid)
+// lookupGroup returns the ID of the group given read access to the pinned
+// maps, or -1 to leave them to the loader's group.
+func lookupGroup(group string) (int, error) {
+	if group == "" {
+		return -1, nil
 	}
-	if group != "" {
-		g, err := user.LookupGroup(group)
-		if err != nil {
-			if g, err = user.LookupGroupId(group); err != nil {
-				return 0, 0, err
-			}
+	g, err := user.LookupGroup(group)
+	if err != nil {
+		if g, err = user.LookupGroupId(group); err != nil {
+			return 0, err
 		}
-		gid, _ = strconv.Atoi(g.Gid)
 	}
-	return uid, gid, nil
+	return strconv.Atoi(g.Gid)
 }
 
 func nativeObject(le, be []byte) []byte {
@@ -120,35 +111,29 @@ func nativeObject(le, be []byte) []byte {
 	return be
 }
 
-// load loads the programs in object except those named in without.
-func load(object []byte, without ...string) (*ebpf.CollectionSpec, *ebpf.Collection, error) {
+// load loads object, using the given maps in place of those of the same name.
+func load(object []byte, maps map[string]*ebpf.Map) (*ebpf.CollectionSpec, *ebpf.Collection, error) {
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(object))
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, name := range without {
-		delete(spec.Programs, name)
-	}
-	coll, err := ebpf.NewCollection(spec)
+	coll, err := ebpf.NewCollectionWithOptions(spec, ebpf.CollectionOptions{MapReplacements: maps})
 	if err != nil {
 		return nil, nil, fmt.Errorf("load: %w", err)
 	}
 	return spec, coll, nil
 }
 
-func attach(cgroup, pin string, execPaths bool, uid, gid int) error {
-	var without []string
-	if !execPaths {
-		without = append(without, sendProgram)
-	}
-	spec, coll, err := load(nativeObject(objectLE, objectBE), without...)
+func attach(cgroup, pin string, execPaths bool, gid int) error {
+	spec, coll, err := load(nativeObject(objectLE, objectBE), nil)
 	if err != nil {
 		return err
 	}
 	defer coll.Close()
 	var execColl *ebpf.Collection
 	if execPaths {
-		if _, execColl, err = load(nativeObject(execObjectLE, execObjectBE)); err != nil {
+		shared := map[string]*ebpf.Map{sockMapName: coll.Maps[sockMapName]}
+		if _, execColl, err = load(nativeObject(execObjectLE, execObjectBE), shared); err != nil {
 			return fmt.Errorf("exec paths: %w", err)
 		}
 		defer execColl.Close()
@@ -159,22 +144,17 @@ func attach(cgroup, pin string, execPaths bool, uid, gid int) error {
 	if err := detach(pin); err != nil {
 		return err
 	}
-	links, maps, err := makePinDirs(pin, uid, gid)
+	links, maps, err := makePinDirs(pin, gid)
 	if err != nil {
 		return err
 	}
 
 	for name, prog := range coll.Programs {
-		var l link.Link
-		if spec.Programs[name].Type == ebpf.LSM {
-			l, err = link.AttachLSM(link.LSMOptions{Program: prog})
-		} else {
-			l, err = link.AttachCgroup(link.CgroupOptions{
-				Path:    cgroup,
-				Attach:  spec.Programs[name].AttachType,
-				Program: prog,
-			})
-		}
+		l, err := link.AttachCgroup(link.CgroupOptions{
+			Path:    cgroup,
+			Attach:  spec.Programs[name].AttachType,
+			Program: prog,
+		})
 		if err != nil {
 			detach(pin)
 			return fmt.Errorf("attach %s: %w", name, err)
@@ -188,7 +168,7 @@ func attach(cgroup, pin string, execPaths bool, uid, gid int) error {
 	}
 
 	if execColl != nil {
-		if err := attachExec(execColl, links, maps, uid, gid); err != nil {
+		if err := attachExec(execColl, links, maps, gid); err != nil {
 			detach(pin)
 			return err
 		}
@@ -201,15 +181,15 @@ func attach(cgroup, pin string, execPaths bool, uid, gid int) error {
 		detach(pin)
 		return fmt.Errorf("pin %s: %w", mapName, err)
 	}
-	return setReader(mapPath, 0o440, uid, gid)
+	return setReader(mapPath, 0o440, gid)
 }
 
 // makePinDirs creates the directories for the links and maps in pin and
-// gives the maps directory to the reader. The reader must be able to pass
-// through pin, while the links directory stays root's alone. MkdirAll and
-// Mkdir don't change existing directories, so their modes are set
-// explicitly.
-func makePinDirs(pin string, uid, gid int) (links, maps string, err error) {
+// gives the reader group access to the maps directory. The reader must be
+// able to pass through pin, while the links directory stays the loader's
+// alone. MkdirAll and Mkdir don't change existing directories, so their modes
+// are set explicitly.
+func makePinDirs(pin string, gid int) (links, maps string, err error) {
 	links = filepath.Join(pin, "links")
 	maps = filepath.Join(pin, "maps")
 	if err := os.MkdirAll(pin, 0o711); err != nil {
@@ -226,7 +206,7 @@ func makePinDirs(pin string, uid, gid int) (links, maps string, err error) {
 	if err := os.Chmod(links, 0o700); err != nil {
 		return "", "", err
 	}
-	if err := setReader(maps, 0o750, uid, gid); err != nil {
+	if err := setReader(maps, 0o750, gid); err != nil {
 		return "", "", err
 	}
 	return links, maps, nil
@@ -234,8 +214,8 @@ func makePinDirs(pin string, uid, gid int) (links, maps string, err error) {
 
 // attachExec attaches the exec-path hooks, adds the processes that are already
 // running and pins the maps.
-func attachExec(coll *ebpf.Collection, links, maps string, uid, gid int) error {
-	for _, name := range []string{"record_exec", "record_fork", "record_free"} {
+func attachExec(coll *ebpf.Collection, links, maps string, gid int) error {
+	for _, name := range execPrograms {
 		l, err := link.AttachLSM(link.LSMOptions{Program: coll.Programs[name]})
 		if err != nil {
 			return fmt.Errorf("attach %s: %w", name, err)
@@ -268,23 +248,21 @@ func attachExec(coll *ebpf.Collection, links, maps string, uid, gid int) error {
 		if err := coll.Maps[name].Pin(path); err != nil {
 			return fmt.Errorf("pin %s: %w", name, err)
 		}
-		if err := setReader(path, 0o440, uid, gid); err != nil {
+		if err := setReader(path, 0o440, gid); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// setReader gives path to root, or to uid and gid where they are set, with
-// mode.
-func setReader(path string, mode os.FileMode, uid, gid int) error {
-	if uid < 0 {
-		uid = 0
-	}
+// setReader gives path to the loader's user and to gid, or the loader's group
+// if gid is -1, with mode. It also takes back a path that an earlier version
+// gave to a reader user.
+func setReader(path string, mode os.FileMode, gid int) error {
 	if gid < 0 {
-		gid = 0
+		gid = os.Getgid()
 	}
-	if err := os.Chown(path, uid, gid); err != nil {
+	if err := os.Chown(path, os.Getuid(), gid); err != nil {
 		return err
 	}
 	return os.Chmod(path, mode)

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/cilium/ebpf"
@@ -36,7 +37,6 @@ func TestObjects(t *testing.T) {
 				"sendmsg4":    ebpf.AttachCGroupUDP4Sendmsg,
 				"sendmsg6":    ebpf.AttachCGroupUDP6Sendmsg,
 				"egress":      ebpf.AttachCGroupInetEgress,
-				sendProgram:   ebpf.AttachLSMMac,
 			}
 			if len(spec.Programs) != len(want) {
 				t.Fatalf("%d programs", len(spec.Programs))
@@ -44,12 +44,6 @@ func TestObjects(t *testing.T) {
 			for name, attach := range want {
 				if p := spec.Programs[name]; p == nil || p.AttachType != attach {
 					t.Errorf("program %s: %+v", name, p)
-				}
-			}
-			// attach loads only the cgroup programs without -exec-paths.
-			for name, p := range spec.Programs {
-				if (p.Type == ebpf.LSM) != (name == sendProgram) {
-					t.Errorf("program %s has type %v", name, p.Type)
 				}
 			}
 			m := spec.Maps[mapName]
@@ -61,15 +55,17 @@ func TestObjects(t *testing.T) {
 }
 
 // The exec-path objects must carry the LSM hooks, the iterator and the maps
-// mihomo reads (execPathValue in component/process/sockowner_linux.go).
+// mihomo reads (execPathValue in component/process/sockowner_linux.go), and
+// share the socket storage of the socket-owner objects.
 func TestExecObjects(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		object []byte
-		order  binary.ByteOrder
+		name       string
+		object     []byte
+		sockObject []byte
+		order      binary.ByteOrder
 	}{
-		{"bpfel", execObjectLE, binary.LittleEndian},
-		{"bpfeb", execObjectBE, binary.BigEndian},
+		{"bpfel", execObjectLE, objectLE, binary.LittleEndian},
+		{"bpfeb", execObjectBE, objectBE, binary.BigEndian},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(tc.object))
@@ -83,10 +79,13 @@ func TestExecObjects(t *testing.T) {
 				typ    ebpf.ProgramType
 				attach ebpf.AttachType
 			}{
-				"record_exec": {ebpf.LSM, ebpf.AttachLSMMac},
-				"record_fork": {ebpf.LSM, ebpf.AttachLSMMac},
-				"record_free": {ebpf.LSM, ebpf.AttachLSMMac},
-				"seed_tasks":  {ebpf.Tracing, ebpf.AttachTraceIter},
+				"seed_tasks": {ebpf.Tracing, ebpf.AttachTraceIter},
+			}
+			for _, name := range execPrograms {
+				want[name] = struct {
+					typ    ebpf.ProgramType
+					attach ebpf.AttachType
+				}{ebpf.LSM, ebpf.AttachLSMMac}
 			}
 			if len(spec.Programs) != len(want) {
 				t.Fatalf("%d programs", len(spec.Programs))
@@ -108,18 +107,37 @@ func TestExecObjects(t *testing.T) {
 					t.Errorf("pinned map %s missing", name)
 				}
 			}
+			// attach gives the exec-path object the socket-owner object's map.
+			sockSpec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(tc.sockObject))
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, s := spec.Maps[sockMapName], sockSpec.Maps[sockMapName]
+			if m == nil || s == nil || m.Type != s.Type || m.KeySize != s.KeySize || m.ValueSize != s.ValueSize || m.Flags != s.Flags {
+				t.Errorf("map %s: %+v, socket-owner object: %+v", sockMapName, m, s)
+			}
 		})
 	}
 }
 
 // A reader must be able to pass through the pin directory to the maps, also
-// when an earlier version created it for root alone; the links stay root's.
+// when an earlier version created it for root alone. The links stay the
+// loader's, and so does the maps directory, which an earlier version gave to
+// a reader user; the reader group only gets read access.
 func TestMakePinDirs(t *testing.T) {
 	pin := filepath.Join(t.TempDir(), "mihomo")
-	if err := os.Mkdir(pin, 0o700); err != nil {
+	maps := filepath.Join(pin, "maps")
+	if err := os.MkdirAll(maps, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	links, maps, err := makePinDirs(pin, os.Getuid(), os.Getgid())
+	gid := os.Getgid()
+	if os.Getuid() == 0 { // can test taking the directory back
+		gid = 4242
+		if err := os.Chown(maps, 4243, 4243); err != nil {
+			t.Fatal(err)
+		}
+	}
+	links, maps, err := makePinDirs(pin, gid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,5 +149,12 @@ func TestMakePinDirs(t *testing.T) {
 		if fi.Mode().Perm() != want {
 			t.Errorf("%s: mode %v, want %v", dir, fi.Mode().Perm(), want)
 		}
+	}
+	fi, err := os.Stat(maps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := fi.Sys().(*syscall.Stat_t); int(st.Uid) != os.Getuid() || int(st.Gid) != gid {
+		t.Errorf("%s: owner %d:%d, want %d:%d", maps, st.Uid, st.Gid, os.Getuid(), gid)
 	}
 }

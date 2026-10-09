@@ -11,6 +11,14 @@
 // processes so connections of short-lived ones can still be named; exec also
 // writes there, so it holds new programs before their process is freed.
 //
+// A process that has been reaped can't be looked up by pidfd any more, but
+// its record only reaches exec_recent once the task is freed, which can be
+// much later. So when a process first sends on or connects a socket, its
+// record is saved in exec_recent too, and the owner of a connection can still
+// be named right after it exits. These hooks also record the process that
+// sends on a connected socket as its owner, which the cgroup hooks in
+// sockowner.c don't see.
+//
 // Every record carries the process's start time. A record only belongs to a
 // connection's owner if the process started before the owner was recorded and,
 // once it has exited, exited after that. This rules out process IDs that were
@@ -33,6 +41,8 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
+
+#include "sockowner.h"
 
 #define CLONE_THREAD 0x00010000
 
@@ -66,6 +76,22 @@ struct task_struct {
 	struct mm_struct *mm;
 	struct task_struct *group_leader;
 } __attribute__((preserve_access_index));
+
+struct sock_common {
+	unsigned short skc_family;
+} __attribute__((preserve_access_index));
+
+struct sock {
+	struct sock_common __sk_common;
+	__u16 sk_protocol;
+} __attribute__((preserve_access_index));
+
+struct socket {
+	struct sock *sk;
+} __attribute__((preserve_access_index));
+
+struct msghdr;
+struct sockaddr;
 
 struct bpf_iter_meta;
 
@@ -186,6 +212,58 @@ int BPF_PROG(record_free, struct task_struct *task)
 	e = bpf_map_lookup_elem(&exec_recent, &tgid);
 	if (e)
 		e->exit_ns = bpf_ktime_get_boot_ns();
+	return 0;
+}
+
+// Records the current process as the owner of a TCP or UDP socket it uses,
+// and saves its record in exec_recent the first time it does.
+static __always_inline void record_socket_user(struct socket *sock)
+{
+	struct sock *sk = sock->sk;
+	struct sock_owner *so;
+	struct exec_path *e;
+	__u32 tgid;
+
+	if (!sk ||
+	    (sk->__sk_common.skc_family != AF_INET &&
+	     sk->__sk_common.skc_family != AF_INET6) ||
+	    !tracked_protocol(sk->sk_protocol))
+		return;
+	so = bpf_sk_storage_get(&sock_owners, sk, 0,
+				BPF_SK_STORAGE_GET_F_CREATE);
+	if (!so)
+		return;
+	record_current(so);
+	tgid = so->owner.tgid;
+	if (so->saved_tgid == tgid)
+		return;
+	e = bpf_task_storage_get(&exec_tasks,
+				 bpf_get_current_task_btf()->group_leader, 0, 0);
+	if (e && !bpf_map_update_elem(&exec_recent, &tgid, e, BPF_ANY))
+		so->saved_tgid = tgid;
+}
+
+// Runs in the sending process for every send, write or splice on a socket,
+// connected or not, before the data goes out. ret is the verdict of the BPF
+// LSM programs that ran before this one, which must stand.
+SEC("lsm/socket_sendmsg")
+int BPF_PROG(record_send, struct socket *sock, struct msghdr *msg, int size,
+	     int ret)
+{
+	if (ret)
+		return ret;
+	record_socket_user(sock);
+	return 0;
+}
+
+// A TCP connection's first packet leaves on connect, before any send.
+SEC("lsm/socket_connect")
+int BPF_PROG(record_connect, struct socket *sock, struct sockaddr *address,
+	     int addrlen, int ret)
+{
+	if (ret)
+		return ret;
+	record_socket_user(sock);
 	return 0;
 }
 
