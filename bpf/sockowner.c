@@ -18,7 +18,9 @@
 
 #include <linux/bpf.h>
 #include <linux/in.h>
+#include <linux/in6.h>
 #include <linux/socket.h>
+#include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
 #include "sockowner.h"
@@ -100,6 +102,68 @@ int sendmsg6(struct bpf_sock_addr *ctx)
 	return record_sock_addr(ctx);
 }
 
+// Netfilter may change the source port when redirecting flows that would
+// otherwise collide at the local listener. The socket keeps its original
+// port, but readers see the translated packet port. Parse it just as we do
+// the source address, including IP options and IPv6 extension headers.
+static __always_inline int packet_source_port(struct __sk_buff *skb,
+					     __u8 version, __u8 protocol,
+					     __u16 *port)
+{
+	__u32 offset;
+	__u16 fragment, wire_port;
+	__u8 next;
+
+	if (version == 4) {
+		__u8 ihl;
+
+		if (bpf_skb_load_bytes(skb, 0, &ihl, 1) ||
+		    bpf_skb_load_bytes(skb, 6, &fragment, 2) ||
+		    bpf_skb_load_bytes(skb, 9, &next, 1))
+			return -1;
+		offset = (ihl & 0x0f) * 4;
+		if (offset < 20 || (bpf_ntohs(fragment) & 0x1fff))
+			return -1;
+	} else {
+		if (bpf_skb_load_bytes(skb, 6, &next, 1))
+			return -1;
+		offset = 40;
+		// Bound the walk for the verifier. Unknown protocols, noninitial
+		// fragments and longer chains don't expose a usable TCP/UDP port.
+		for (int i = 0; i < 8; i++) {
+			__u8 header[2];
+
+			if (tracked_protocol(next))
+				break;
+			if (bpf_skb_load_bytes(skb, offset, header, 2))
+				return -1;
+			switch (next) {
+			case IPPROTO_HOPOPTS:
+			case IPPROTO_ROUTING:
+			case IPPROTO_DSTOPTS:
+				offset += ((__u32)header[1] + 1) * 8;
+				break;
+			case IPPROTO_AH:
+				offset += ((__u32)header[1] + 2) * 4;
+				break;
+			case IPPROTO_FRAGMENT:
+				if (bpf_skb_load_bytes(skb, offset + 2, &fragment, 2) ||
+				    (bpf_ntohs(fragment) & 0xfff8))
+					return -1;
+				offset += 8;
+				break;
+			default:
+				return -1;
+			}
+			next = header[0];
+		}
+	}
+	if (next != protocol || bpf_skb_load_bytes(skb, offset, &wire_port, 2))
+		return -1;
+	*port = bpf_ntohs(wire_port);
+	return 0;
+}
+
 SEC("cgroup_skb/egress")
 int egress(struct __sk_buff *skb)
 {
@@ -141,8 +205,9 @@ int egress(struct __sk_buff *skb)
 	}
 
 	key.netns = so->netns;
-	key.port = sk->src_port;
 	key.proto = sk->protocol;
+	if (packet_source_port(skb, version, key.proto, &key.port))
+		return 1;
 
 	// Check the map on every packet rather than remembering what this
 	// socket published: the source address and port can change (a UDP

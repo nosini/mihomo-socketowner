@@ -7,7 +7,9 @@ On Linux, mihomo can look up the process behind a connection in BPF maps instead
 - `bpf/sockowner.c` holds cgroup programs that record the process that creates, connects or
   sends on each TCP/UDP socket. On a socket's first outgoing packet they publish that process ID
   and user ID in the `conn_owners` LRU map, keyed by network namespace, protocol, source
-  address and source port. The cgroup hooks don't see sends on a connected socket, so with
+  address and source port, both read from the packet after any NAT translation. Socket
+  ports can differ when redirection remaps a port to avoid a collision at its listener.
+  The cgroup hooks don't see sends on a connected socket, so with
   `-exec-paths` LSM programs in `execpath.c` record those. Without it, a connected socket
   that a process hands to another stays with the process that connected it.
 - `bpf/execpath.c` holds LSM programs that record the executable of every process: when it
@@ -62,6 +64,19 @@ CGO_ENABLED=0 go build -o mihomo-sockowner .
 `go generate` rebuilds `sockowner_bpf*.o` and `execpath_bpf*.o`, which are committed so the
 loader builds without clang. `go test ./...` checks that the objects carry the programs
 and the map layouts mihomo reads.
+
+The loader's privileged regression test requires cgroup v2, nftables and iproute2.
+Run it in a dedicated network namespace; it attaches only to its own temporary cgroup:
+
+```sh
+go test -c -tags sockowner_vm -o socketowner.test .
+sudo unshare --net sh -c 'ip link set lo up; ./socketowner.test -test.v -test.run Redirect'
+```
+
+It forces source-port collisions at a redirect listener and checks that the translated
+TCP and UDP peers resolve to the sending process, for IPv4 and IPv6. TCP cases also
+cover IPv4 options and IPv6 destination options. The packet parser skips noninitial
+fragments and supports chains of up to eight IPv6 extension headers.
 
 In a separate mihomo checkout, `component/process/sockowner_vm_test.go` compares
 the BPF lookup with the `/proc` lookup. It needs the programs attached (with
