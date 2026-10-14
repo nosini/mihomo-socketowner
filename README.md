@@ -1,62 +1,67 @@
-# Socket-owner BPF programs
+# socketowner
 
-On Linux, mihomo can look up the process behind a connection in BPF maps instead of searching
-`/proc`. The maps also answer for connections whose socket has already closed, and, with
-`-exec-paths`, for processes that have exited.
+socketowner records which Linux process owns an outgoing TCP or UDP connection, so
+mihomo can match process rules without permission to inspect other processes.
+A small privileged loader attaches the BPF programs and exits. mihomo reads the
+resulting maps without BPF capabilities. Records can outlive both the socket and
+the process, so short connections can still be identified.
 
-- `bpf/sockowner.c` holds cgroup programs that record the process that creates, connects or
-  sends on each TCP/UDP socket. On a socket's first outgoing packet they publish that process ID
-  and user ID in the `conn_owners` LRU map, keyed by network namespace, protocol, source
-  address and source port. The cgroup hooks don't see sends on a connected socket, so with
-  `-exec-paths` LSM programs in `execpath.c` record those. Without it, a connected socket
-  that a process hands to another stays with the process that connected it.
-- `bpf/execpath.c` holds LSM programs that record the executable of every process: when it
-  executes a program, when it's forked (a copy of the parent's) and when it's freed. Running
-  processes keep their record in task storage, `exec_tasks`; `exec_recent` keeps the latest
-  records by process ID, including those of processes that have exited. A process's record goes
-  there at exec and when it's freed, which can be well after it was reaped and can no longer be
-  found by process ID, so LSM hooks on `socket_connect` and `socket_sendmsg` also save it the
-  first time the process uses a socket. Each record has the process's start time, so a reused
-  process ID isn't mistaken for the owner. An iterator adds the processes that were already
-  running. Only LSM hooks record, because the kernel skips a tracing program on a CPU where the
-  same program was preempted, which would leave a forked process without a record.
-- `mihomo-sockowner` is the loader, a separate Go module so that mihomo itself doesn't
-  depend on cilium/ebpf. `mihomo-sockowner attach` loads the programs, attaches them to the root cgroup
-  and pins the links in `/sys/fs/bpf/mihomo/links` and the map in
-  `/sys/fs/bpf/mihomo/maps/conn_owners`, then exits. `mihomo-sockowner detach` removes the
-  pins. It needs `CAP_BPF` and `CAP_NET_ADMIN`, plus `CAP_CHOWN` for `-reader-group`. With
-  `-exec-paths` it also attaches the programs of `execpath.c` and pins their maps next to
-  `conn_owners`. Those read kernel structures, relocated with the kernel's BTF, so they need
-  `CAP_PERFMON` and a kernel with the BPF LSM active (`bpf` in `/sys/kernel/security/lsm`).
-  `-reader-group` gets read access to the `maps` directory and the maps, which stay root's:
-  their owner could make them writable and forge entries. Anyone may pass through the pin
-  directory to `maps`. `/sys/fs/bpf` itself is usually root's alone, though, so a reader that
-  isn't root needs the `maps` directory bound somewhere it can reach, for example with
-  systemd's `BindReadOnlyPaths=`.
-- mihomo opens the maps read-only with plain `bpf()` calls
-  (in its `component/process/sockowner_linux.go`), at the path in `find-process-bpf-map`. It needs no
-  capabilities for that where the maps' file permissions allow it. It finds a running process
-  in `exec_tasks` through a pidfd, which needs no access to the process either. Without the
-  exec-path maps it reads the owner's `/proc/<pid>/exe`, and it falls back to the netlink and
-  `/proc` lookup when the maps are missing or don't know a connection.
-  `find-process-bpf-only: true` turns both fallbacks off, so that mihomo needs no access to
-  other processes at all.
+The loader is installed and updated separately from mihomo. Its executable stays
+named `mihomo-sockowner` for compatibility with existing deployments.
 
-## Building
+## Installing and using
+
+Install a separately built `mihomo-sockowner` binary:
 
 ```sh
-go generate   # needs clang, llvm-strip and the libbpf headers
-CGO_ENABLED=0 go build -o mihomo-sockowner .
+sudo install -m 755 mihomo-sockowner /usr/local/bin/mihomo-sockowner
 ```
 
-`go generate` rebuilds `sockowner_bpf*.o` and `execpath_bpf*.o`, which are committed so the
-loader builds without clang. `go test` checks that the objects carry the programs
-and the map layouts mihomo reads.
+For a sandboxed systemd setup with a reader group, read-only map mounts and SELinux
+policy, follow [hardened-mihomo-service](https://github.com/nosini/hardened-mihomo-service#process-lookup).
+That repository owns the service units and policy; it uses this loader as a
+separate prerequisite.
 
-In a mihomo checkout, `component/process/sockowner_vm_test.go` compares the BPF lookup with the `/proc` lookup. It
-needs the programs attached (with `-exec-paths` for the exec-path tests) and root:
+To attach manually, with the existing `mihomo` group allowed to read the maps:
 
 ```sh
-go test -c -tags sockowner_vm -o process.test ./component/process/
-sudo ./process.test -test.v -test.run 'SockOwner|ExecPath'
+sudo /usr/local/bin/mihomo-sockowner -reader-group mihomo -exec-paths attach
 ```
+
+The default pin directory is `/sys/fs/bpf/mihomo`. `-pin` changes it; `-cgroup`
+selects a cgroup v2 directory instead of `/sys/fs/cgroup`. Flags precede `attach`
+or `detach`. bpffs must already be mounted at `/sys/fs/bpf`.
+
+`-exec-paths` requires kernel BTF and an active BPF LSM. Without it, the loader
+records socket owners only, and mihomo needs `/proc` access to resolve their
+executables. Attaching needs `CAP_BPF` and `CAP_NET_ADMIN`, plus `CAP_CHOWN` for
+`-reader-group` and `CAP_PERFMON` for `-exec-paths`. The loader exits after attach;
+pinned links keep the programs running.
+
+Point mihomo's `find-process-bpf-map` at `maps/conn_owners` inside the pin directory
+(or its read-only bind mount). Set `find-process-bpf-only: true` with `-exec-paths`
+to prevent fallback to `/proc`. An unprivileged reader needs directory traversal
+and map read permission; the systemd setup supplies both.
+
+To stop recording, after stopping dependent readers:
+
+```sh
+sudo /usr/local/bin/mihomo-sockowner detach
+```
+
+Use the same `-pin` for attach and detach if you changed it. Both commands preserve
+the map directory so existing directory bind mounts keep working.
+
+## Compatibility and updates
+
+This loader publishes [map interface v1](docs/map-interface.md). Update it
+independently from mihomo, keeping a version whose map interface the reader
+supports. Installing mihomo must not build, install or replace this privileged
+executable. A loader update takes effect when its service is restarted.
+
+See [development](docs/development.md) for source builds and tests.
+
+## License
+
+[GNU GPL v3](LICENSE). The BPF object files retain the same license as their
+sources.

@@ -9,10 +9,11 @@ import (
 	"testing"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/btf"
 )
 
 // Both embedded objects must parse and agree on the programs and the layout
-// mihomo reads (component/process/sockowner_linux.go).
+// readers use (docs/map-interface.md).
 func TestObjects(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -30,6 +31,15 @@ func TestObjects(t *testing.T) {
 			if spec.ByteOrder != tc.order {
 				t.Fatalf("byte order %v", spec.ByteOrder)
 			}
+			if err := validateMapABI(spec, false); err != nil {
+				t.Fatal(err)
+			}
+			checkStructABI(t, spec.Maps[mapName].Key, 32, []abiMember{
+				{"netns", 0, 8}, {"addr", 8, 16}, {"port", 24, 2}, {"proto", 26, 1}, {"pad", 27, 5},
+			})
+			checkStructABI(t, spec.Maps[mapName].Value, 16, []abiMember{
+				{"tgid", 0, 4}, {"uid", 4, 4}, {"boot_ns", 8, 8},
+			})
 			want := map[string]ebpf.AttachType{
 				"sock_create": ebpf.AttachCGroupInetSockCreate,
 				"connect4":    ebpf.AttachCGroupInet4Connect,
@@ -55,7 +65,7 @@ func TestObjects(t *testing.T) {
 }
 
 // The exec-path objects must carry the LSM hooks, the iterator and the maps
-// mihomo reads (execPathValue in component/process/sockowner_linux.go), and
+// readers use (docs/map-interface.md), and
 // share the socket storage of the socket-owner objects.
 func TestExecObjects(t *testing.T) {
 	for _, tc := range []struct {
@@ -74,6 +84,14 @@ func TestExecObjects(t *testing.T) {
 			}
 			if spec.ByteOrder != tc.order {
 				t.Fatalf("byte order %v", spec.ByteOrder)
+			}
+			if err := validateMapABI(spec, true); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range execMapNames {
+				checkStructABI(t, spec.Maps[name].Value, 1048, []abiMember{
+					{"start_ns", 0, 8}, {"exit_ns", 8, 8}, {"len", 16, 4}, {"pad", 20, 4}, {"path", 24, 1024},
+				})
 			}
 			want := map[string]struct {
 				typ    ebpf.ProgramType
@@ -117,6 +135,65 @@ func TestExecObjects(t *testing.T) {
 				t.Errorf("map %s: %+v, socket-owner object: %+v", sockMapName, m, s)
 			}
 		})
+	}
+}
+
+type abiMember struct {
+	name         string
+	offset, size int
+}
+
+// Check field offsets as well as total sizes: reordering equal-sized fields
+// changes the ABI without changing the kernel's reported map dimensions.
+func checkStructABI(t *testing.T, typ btf.Type, size uint32, want []abiMember) {
+	t.Helper()
+	s, ok := typ.(*btf.Struct)
+	if !ok || s.Size != size || len(s.Members) != len(want) {
+		t.Fatalf("unexpected ABI struct: %+v", typ)
+	}
+	for i, w := range want {
+		m := s.Members[i]
+		n, err := btf.Sizeof(m.Type)
+		if err != nil || m.Name != w.name || int(m.Offset) != w.offset*8 || n != w.size {
+			t.Errorf("%s member %d: %+v (size %d, error %v), want %+v", s.Name, i, m, n, err, w)
+		}
+	}
+}
+
+func TestRejectIncompatibleMapABI(t *testing.T) {
+	for _, execPaths := range []bool{false, true} {
+		object := objectLE
+		if execPaths {
+			object = execObjectLE
+		}
+		spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(object))
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := []string{mapName}
+		if execPaths {
+			names = execMapNames
+		}
+		for _, name := range names {
+			for _, field := range []string{"missing", "type", "key", "value"} {
+				t.Run(name+"/"+field, func(t *testing.T) {
+					changed := spec.Copy()
+					switch field {
+					case "missing":
+						delete(changed.Maps, name)
+					case "type":
+						changed.Maps[name].Type = ebpf.Hash
+					case "key":
+						changed.Maps[name].KeySize++
+					case "value":
+						changed.Maps[name].ValueSize++
+					}
+					if err := validateMapABI(changed, execPaths); err == nil {
+						t.Fatal("accepted incompatible map")
+					}
+				})
+			}
+		}
 	}
 }
 

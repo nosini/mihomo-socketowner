@@ -112,9 +112,12 @@ func nativeObject(le, be []byte) []byte {
 }
 
 // load loads object, using the given maps in place of those of the same name.
-func load(object []byte, maps map[string]*ebpf.Map) (*ebpf.CollectionSpec, *ebpf.Collection, error) {
+func load(object []byte, maps map[string]*ebpf.Map, execPaths bool) (*ebpf.CollectionSpec, *ebpf.Collection, error) {
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(object))
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateMapABI(spec, execPaths); err != nil {
 		return nil, nil, err
 	}
 	coll, err := ebpf.NewCollectionWithOptions(spec, ebpf.CollectionOptions{MapReplacements: maps})
@@ -125,7 +128,7 @@ func load(object []byte, maps map[string]*ebpf.Map) (*ebpf.CollectionSpec, *ebpf
 }
 
 func attach(cgroup, pin string, execPaths bool, gid int) error {
-	spec, coll, err := load(nativeObject(objectLE, objectBE), nil)
+	spec, coll, err := load(nativeObject(objectLE, objectBE), nil, false)
 	if err != nil {
 		return err
 	}
@@ -133,7 +136,7 @@ func attach(cgroup, pin string, execPaths bool, gid int) error {
 	var execColl *ebpf.Collection
 	if execPaths {
 		shared := map[string]*ebpf.Map{sockMapName: coll.Maps[sockMapName]}
-		if _, execColl, err = load(nativeObject(execObjectLE, execObjectBE), shared); err != nil {
+		if _, execColl, err = load(nativeObject(execObjectLE, execObjectBE), shared, true); err != nil {
 			return fmt.Errorf("exec paths: %w", err)
 		}
 		defer execColl.Close()
@@ -174,7 +177,12 @@ func attach(cgroup, pin string, execPaths bool, gid int) error {
 		}
 	}
 
-	// Pinned last: mihomo looks for the exec-path maps when it notices a
+	if err := pinABIVersion(filepath.Join(maps, abiVersionMap), gid); err != nil {
+		detach(pin)
+		return fmt.Errorf("pin ABI version: %w", err)
+	}
+
+	// Pinned last: mihomo looks for the version and exec-path maps when it notices a
 	// new socket-owner map.
 	mapPath := filepath.Join(maps, mapName)
 	if err := coll.Maps[mapName].Pin(mapPath); err != nil {
