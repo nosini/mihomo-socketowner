@@ -183,12 +183,13 @@ capabilities and service confinement remain unverified.
    in-process link/map identity checks are tested. The private
    [authority experiment](AUTHORITY.md) adds separate-process crash/reconnect
    tests and frozen read-only maps. The [bootstrap follow-up](BOOTSTRAP.md) adds
-   authenticated FD transfer and journaled recovery. Stable optional metadata,
+   authenticated FD transfer and journaled recovery. A stable optional reader interface,
    production entry points and deployment confinement remain open.
 3. **Production routing metadata.** The supervised [REDIRECT test](ROUTING.md)
    now proves bounded lookup and destination preservation at the real Mihomo
-   tunnel. Explicit provenance, source precedence, Fake-IP/sniffer interactions
-   and a safe external reader still need design and validation.
+   tunnel. Mihomo's internal metadata defines provenance and source precedence,
+   with local Fake-IP/conflict tests and VM sniff/hosts cases. Final-consumption
+   authority and a safe external reader still need integration and validation.
 
 The live-frame mechanism solves the reproduced stale handshake-cache case for
 the tested path. It is a foundation for milestone 1, not completion of it.

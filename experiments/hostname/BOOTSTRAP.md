@@ -141,9 +141,13 @@ owner pins. Without the authority VM environment, privileged tests skip.
 ## Next integration work
 
 The implementation remains private to `experiments/hostname`. Production use
-still needs a stable optional hostname record/provenance contract, rule-source
-precedence and destination preservation, a loader entry point, reader packaging,
+still needs a stable optional reader record contract, final-consumption authority,
+a loader entry point, reader packaging,
 operator enable/disable behavior and tested service confinement/restart policy.
 The exact-build, single-target, first-send/4 KiB and fixed-guard restrictions
 remain. Broader sends, reinjection, full TLS and browser encrypted-DNS/ECH support
 remain unverified.
+
+The [Mihomo metadata follow-up](../../../mihomo/docs/application-hostname-metadata.md)
+defines internal rule-source precedence and destination preservation. It remains
+a supervised consumer; this bootstrap is not yet connected to production routing.

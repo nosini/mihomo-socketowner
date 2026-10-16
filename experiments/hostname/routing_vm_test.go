@@ -24,9 +24,9 @@ import (
 // Private inherited-socket protocol shared with Mihomo's test-only helper.
 // No maps, links, pins or observer authority are transferred to that process.
 type routeVMEvent struct {
-	Kind, Address, Source, Local, Original, Name, Proxy, Host string
-	Netns, Cookie                                             uint64
-	ElapsedNS                                                 int64
+	Kind, Address, Source, Local, Original, Name, Proxy, Host, RuleHost, SniffHost string
+	Netns, Cookie                                                                  uint64
+	ElapsedNS                                                                      int64
 }
 type routeVMReply struct{ Name string }
 
@@ -40,7 +40,7 @@ type routeVMHelper struct {
 	err  error
 }
 
-func newRouteVMHelper(t *testing.T, network string, budget int, processMode string) *routeVMHelper {
+func newRouteVMHelper(t *testing.T, network string, budget int, processMode, policy string) *routeVMHelper {
 	t.Helper()
 	path := os.Getenv("HOSTNAME_VM_MIHOMO")
 	if path == "" {
@@ -64,7 +64,7 @@ func newRouteVMHelper(t *testing.T, network string, budget int, processMode stri
 	if network == "tcp6" {
 		address = "[::1]:0"
 	}
-	h.cmd.Env = append(os.Environ(), "HOSTNAME_VM_ROUTE_HELPER=1", "HOSTNAME_VM_ROUTE_BUDGET_MS="+strconv.Itoa(budget), "HOSTNAME_VM_ROUTE_PROCESS="+processMode, "HOSTNAME_VM_ROUTE_LISTEN="+address)
+	h.cmd.Env = append(os.Environ(), "HOSTNAME_VM_ROUTE_HELPER=1", "HOSTNAME_VM_ROUTE_BUDGET_MS="+strconv.Itoa(budget), "HOSTNAME_VM_ROUTE_PROCESS="+processMode, "HOSTNAME_VM_ROUTE_LISTEN="+address, "HOSTNAME_VM_ROUTE_POLICY="+policy)
 	h.cmd.ExtraFiles = []*os.File{child}
 	h.cmd.Stdout, h.cmd.Stderr = &h.log, &h.log
 	err = h.cmd.Start()
@@ -109,7 +109,7 @@ func (h *routeVMHelper) reply(t *testing.T, name string) {
 
 func TestVMHostnameRoutingDeadline(t *testing.T) {
 	for _, network := range []string{"tcp4", "tcp6"} {
-		for _, scenario := range []string{"current", "before-deadline", "late", "observer-stopped", "lookup-stalled", "reply-late"} {
+		for _, scenario := range []string{"current", "before-deadline", "late", "observer-stopped", "lookup-stalled", "reply-late", "sniff", "mapping-hosts"} {
 			for _, processMode := range []string{"off", "always"} {
 				t.Run(network+"/"+scenario+"/process-"+processMode, func(t *testing.T) {
 					budget := 250
@@ -117,7 +117,7 @@ func TestVMHostnameRoutingDeadline(t *testing.T) {
 						budget = 0
 					}
 					// Start the optional helper first so a missing path skips cheaply.
-					h := newRouteVMHelper(t, network, budget, processMode)
+					h := newRouteVMHelper(t, network, budget, processMode, scenario)
 					ready := h.read(t, "ready")
 					f := newFixtureMode(t, network, true)
 					disableHandshakeProbe(t, f)
@@ -190,7 +190,7 @@ func TestVMHostnameRoutingDeadline(t *testing.T) {
 							if name != "" {
 								t.Fatal("first lookup preceded the sending operation")
 							}
-							if scenario == "before-deadline" || scenario == "observer-stopped" || scenario == "reply-late" {
+							if scenario == "before-deadline" || scenario == "observer-stopped" || scenario == "reply-late" || scenario == "sniff" || scenario == "mapping-hosts" {
 								f.command("handshake %d", c.slot)
 							}
 							if scenario == "reply-late" {
@@ -206,11 +206,17 @@ func TestVMHostnameRoutingDeadline(t *testing.T) {
 						}
 					}
 					want := "DIRECT"
-					if scenario == "before-deadline" {
+					if scenario == "before-deadline" || scenario == "sniff" || scenario == "mapping-hosts" {
 						want = "NAMED"
 					}
 					if dial.Proxy != want || dial.Original != original || dial.Host != "" {
 						t.Fatalf("route/dial %+v, expected %s to %s", dial, want, original)
+					}
+					if want == "NAMED" && dial.RuleHost != "route.invalid" {
+						t.Fatalf("real RuleHost did not select application name: %+v", dial)
+					}
+					if scenario == "sniff" && dial.SniffHost != "route.invalid" {
+						t.Fatalf("TLS sniff did not run: %+v", dial)
 					}
 					h.read(t, "connected") // reject dial failures before testing relay
 					elapsed := time.Duration(dial.ElapsedNS)
@@ -236,16 +242,17 @@ func TestVMHostnameRoutingDeadline(t *testing.T) {
 					// A late name never causes a second dial or a route change.
 					f.command("close %d", c.slot)
 					c.server.Close()
-					// Closing a Unix stream with the expired positive reply still
-					// unread can reset its peer. No further event may be decoded.
-					if err := h.dec.Decode(&routeVMEvent{}); !errors.Is(err, io.EOF) && !(scenario == "reply-late" && errors.Is(err, unix.ECONNRESET)) {
+					// A reply queued as the deadline expires (including an unknown
+					// result) can remain unread and reset the peer at close. Still
+					// reject any further event and require successful helper exit.
+					if err := h.dec.Decode(&routeVMEvent{}); !errors.Is(err, io.EOF) && !errors.Is(err, unix.ECONNRESET) {
 						t.Fatalf("expected helper closure after the committed connection closed: %v", err)
 					}
 					<-h.done
 					if h.err != nil {
 						t.Fatalf("Mihomo helper failed: %v", h.err)
 					}
-					if scenario == "before-deadline" && lookups < 2 {
+					if (scenario == "before-deadline" || scenario == "sniff" || scenario == "mapping-hosts") && lookups < 2 {
 						t.Fatal("did not test evidence arriving after an initial miss")
 					}
 					if scenario == "current" && lookups != 0 {

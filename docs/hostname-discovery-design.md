@@ -99,9 +99,17 @@ observer is the socket/cleanup owner; readers bind to its kernel peer pidfd.
 A root-private journal and stable lock support revocation before owned cleanup
 and recovery after partial setup or crash without trusting a reusable numeric PID.
 
+The [metadata follow-up](../../mihomo/docs/application-hostname-metadata.md) adds
+connection-bound application-name provenance to Mihomo's ordinary `RuleHost()`
+path. It defines explicit/Fake-IP precedence, ordinary-name conflicts and the
+separate verified-inner role. Usable evidence preserves the real IP/port through
+DNS hints, hosts overrides, sniffing and dial encoding. The expanded supervised
+REDIRECT matrix uses the real DOMAIN matcher rather than a rule-input clone.
+There is still no production caller, reader interface or enable setting.
+
 Milestone 1 remains open for broader send coverage and reinjection. Stable
-optional metadata/provenance, production source precedence/entry points and
-service confinement remain unimplemented. These diagnostic maps must not become
+optional reader records, final-consumption authority checks, production entry
+points and service confinement remain unimplemented. These diagnostic maps must not become
 a stable public routing interface without that work.
 
 ## Objective

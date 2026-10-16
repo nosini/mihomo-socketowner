@@ -96,8 +96,10 @@ including those whose first ClientHello is sent after restart, remain unknown.
 
 This validates a read interval. It is not permission to cache a returned name or
 use it for a later connection. Production route commitment still needs explicit
-instance binding, bounded freshness and metadata precedence; the supervised
+instance binding and bounded freshness; the supervised
 [routing experiment](ROUTING.md) is not replaced by an independent service here.
+Mihomo's internal [metadata semantics](../../../mihomo/docs/application-hostname-metadata.md)
+now define source precedence without supplying that authority integration.
 
 ## Validation, 2026-10-16
 
@@ -168,6 +170,6 @@ The [bootstrap follow-up](BOOTSTRAP.md) adds an experimental versioned Unix
 socket exchange, kernel peer credentials/pidfd and a cleanup journal with crash
 recovery. The original inherited-FD tests remain useful isolation tests.
 Stable publication/connection identity, production entry points, operator
-enable/disable, service confinement and source precedence still need integration
+enable/disable, service confinement and final-consumption authority still need integration
 before this becomes a routing interface.
 Guard reclamation, broader sends, reinjection and runtime coverage remain open.

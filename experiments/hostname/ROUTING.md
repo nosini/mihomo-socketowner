@@ -4,6 +4,9 @@ This opt-in VM experiment runs the verified OpenSSL client through Mihomo's real
 Linux REDIRECT listener, TCP tunnel, DOMAIN rule matcher, DIRECT adapter and TCP
 relay. It tests when the outbound is chosen relative to the first ClientHello.
 There is no production hostname reader, configuration option or public map ABI.
+The follow-up uses Mihomo's internal application-hostname metadata and ordinary
+domain matcher; [metadata semantics](../../../mihomo/docs/application-hostname-metadata.md)
+define provenance, conflicts and destination preservation.
 
 ## Deadline and destination
 
@@ -27,18 +30,19 @@ reporting are outside it. This is a correctness test setting, not a proposed
 production timeout or latency measurement. Process lookup and ordinary tunnel
 work can add time after the hostname wait ends.
 
-Evidence stays in a test-only field. A rule wrapper supplies it on a metadata
-clone to the ordinary DOMAIN rule for `route.invalid`, selecting an outbound
-named `NAMED`; fallback selects `DIRECT`. Both outbounds use the real DIRECT
-adapter. Neither `Host` nor `SniffHost` on the original metadata is changed.
+Validated evidence is supplied through `Metadata.SetApplicationHostname` with
+ordinary TLS-name provenance. `RuleHost()` supplies it directly to the ordinary
+DOMAIN rule for `route.invalid`, selecting `NAMED`; fallback selects `DIRECT`.
+Both outbounds use the real DIRECT adapter. The application name never becomes
+`Host`. In the sniff case, `SniffHost` independently records the ClientHello SNI.
 The test checks the dial address against the application's original IP and port,
 then verifies the intended ClientHello arrives there through Mihomo's TCP relay.
 It does not resolve or dial `route.invalid`.
 
 ## Private supervision
 
-The companion Mihomo test is `tunnel/hostname_vm_test.go`, introduced in commit
-`b5d86d48` on its `ebpf-hostname-discovery` branch. It is built only with
+The companion Mihomo test is `tunnel/hostname_vm_test.go` on its
+`ebpf-hostname-discovery` branch (metadata follow-up `16fa9a33`). It is built only with
 `hostname_vm` and skips
 unless explicitly launched as a helper. The socketowner test passes an inherited
 Unix socket, receives tuple/route events and answers lookup requests. The parent
@@ -58,9 +62,9 @@ Do not turn this bridge into a production consumer of the diagnostic maps.
 
 ## Validation, 2026-10-16
 
-The full socketowner VM suite passes with the companion Mihomo helper. All 24
-routing cases also pass with both Go binaries built under the race detector.
-Local unit checks and VM-tagged vet pass in both affected packages.
+The previous full socketowner VM suite passed with the original companion
+helper. The expanded 32-case routing matrix passes with both Go binaries built
+under the race detector. Local unit/race checks and VM-tagged vet pass.
 
 The matrix covers IPv4/IPv6 with process lookup both `off` and `always`:
 
@@ -76,12 +80,21 @@ The matrix covers IPv4/IPv6 with process lookup both `off` and `always`:
   fallback still forwards the subsequently sent ClientHello.
 - Late reply: a real positive BPF result is deliberately delivered after the
   deadline; it cannot change the fallback route.
+- Sniffing: TLS sniffing runs on the fixture's random port with destination
+  replacement enabled. The matching application name selects the ordinary
+  DOMAIN rule while preserving the original IP and port.
+- Mapping/hosts: an IP-to-name hint differs from the application name; both
+  names have hosts entries pointing elsewhere. The real preprocessing, rule
+  selection and dial paths keep the original destination and use the verified
+  application name for the DOMAIN rule.
 
 Each case checks the real outbound dial and relay, the original IP/port, and a
 single route commitment. IPv6 is explicitly enabled in the helper, since Mihomo's
-resolver defaults to disabling it. Sniffing remains off for this matrix.
+resolver defaults to disabling it. Sniffing is enabled only for its explicit case.
 The peer stops after ClientHello; full TLS, certificate validation, encrypted DNS,
-ECH, Fake-IP/sniffer precedence and browser workloads are not demonstrated.
+ECH and browser workloads are not demonstrated. Separate local tests cover
+source precedence, conflicts and IPv4/IPv6 Fake-IP preprocessing with a controlled
+pool; Fake-IP is not exercised end to end by this REDIRECT matrix.
 
 ## Running
 
@@ -118,8 +131,9 @@ unsupported library profile or failed attachment never enables hostname routing.
 
 The [authority experiment](AUTHORITY.md) tests private observer crash/reconnect
 and read-only access in separate processes. The [bootstrap follow-up](BOOTSTRAP.md)
-adds an authenticated experimental exchange and cleanup owner. Finalize the
-optional record/provenance contract and service integration before production use. Define explicit
-application-name provenance and precedence alongside Fake-IP, explicit proxy
-names and sniffing. Broader send paths and reinjection remain outside the proved
+adds an authenticated experimental exchange and cleanup owner. Mihomo's internal
+metadata now defines application-name provenance and precedence alongside Fake-IP,
+explicit names and sniffing. A stable reader interface, freshness/revocation at
+final route consumption and service integration remain before production use.
+Broader send paths and reinjection remain outside the proved
 first-write path; browser/encrypted-DNS/ECH support remains a later milestone.
