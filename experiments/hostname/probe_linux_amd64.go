@@ -1,5 +1,6 @@
 // Package hostname contains an isolated, diagnostic OpenSSL correlation experiment.
-// No records are pinned or made available to Mihomo.
+// No records are pinned or exposed as a public routing interface. The opt-in
+// routing VM test supervises a Mihomo helper over a private inherited socket.
 package hostname
 
 import (

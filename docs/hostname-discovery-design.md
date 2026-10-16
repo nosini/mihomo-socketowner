@@ -78,9 +78,18 @@ revokes stopped or changed sessions, and leaves already-open sockets unknown
 after restart. Cross-process observer authority and crash handling remain work
 for independent service integration.
 
-Milestone 1 remains open: broader send coverage, reinjection and Mihomo's actual
-routing deadline still need proof; independent-service operation remains later.
-These diagnostic maps must not become a routing interface without that work.
+The [routing follow-up](../experiments/hostname/ROUTING.md) runs the controlled
+client through Mihomo's real REDIRECT listener, rule matcher, DIRECT adapter and
+relay. It demonstrates that the current route can commit before ClientHello,
+then tests a bounded pre-routing lookup, late evidence/replies, stopped observer
+and stalled IPC for IPv4/IPv6 with process lookup on/off. A DOMAIN rule selects
+the expected outbound while preserving the original IP and port. The private
+supervised test bridge introduces no production reader or service ABI.
+
+Milestone 1 remains open for broader send coverage and reinjection. Independent
+observer authority/crash handling and production metadata/source precedence
+remain unimplemented. These diagnostic maps must not become a public routing
+interface without that work.
 
 ## Objective
 

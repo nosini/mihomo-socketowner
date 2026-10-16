@@ -161,6 +161,8 @@ The combined VM suite and local unit/vet checks pass. The send tests cover:
   for the 4 KiB limit and synthetic parser/window tests.
 - Final close, peer FIN/RST, tuple reuse with retained records, link/map
   replacement and checked in-process stop/restart; see [LIFETIME.md](LIFETIME.md).
+- Real Mihomo REDIRECT routing deadlines, bounded lookup/failure, fixed routes
+  after late evidence, and destination preservation; see [ROUTING.md](ROUTING.md).
 
 The TLS peer stops after reading ClientHello. Completed TLS, ECH, real encrypted
 DNS, browser builds, Flatpak, TUN, TPROXY, explicit proxies, performance, minimal
@@ -177,10 +179,10 @@ capabilities and service confinement remain unverified.
    in-process link/map identity checks are tested. An external reader still
    needs an explicit authority/reconnect contract, independent observer-crash
    tests, least-privilege separation and a versioned optional ABI.
-3. **Routing deadline.** The tests prove a map is available at first ClientHello
-   reception in their controlled listener, not Mihomo's actual route commitment.
-   Demonstrate a bounded wait and destination preservation in one real inbound
-   mode before adding routing metadata.
+3. **Production routing metadata.** The supervised [REDIRECT test](ROUTING.md)
+   now proves bounded lookup and destination preservation at the real Mihomo
+   tunnel. Explicit provenance, source precedence, Fake-IP/sniffer interactions
+   and a safe external reader still need design and validation.
 
 The live-frame mechanism solves the reproduced stale handshake-cache case for
 the tested path. It is a foundation for milestone 1, not completion of it.

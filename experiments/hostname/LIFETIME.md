@@ -119,6 +119,7 @@ must be designed before an external map consumer is introduced.
 
 The first-write/4 KiB restriction, fixed 256 lifetime guards and lack of guard
 reclamation remain. Reinjection, other interception/send paths, broader runtime
-coverage and performance remain unverified. The next end-to-end requirement is
-Mihomo's actual route commitment: bounded lookup timing and destination
-preservation still need a real inbound test before routing integration.
+coverage and performance remain unverified. The [routing experiment](ROUTING.md)
+now tests bounded lookup timing and destination preservation through Mihomo's
+real REDIRECT inbound. Its supervised test bridge does not establish independent
+observer authority or a production routing interface.
