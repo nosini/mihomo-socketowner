@@ -85,8 +85,9 @@ the [fault object](PUBLICATION.md) for the complete publication suite.
   names. The peer still receives a ClientHello. Parallel tests exercise separate
   SSL objects and do not claim a forced ordering inside the kernel.
 - An unsupported first write followed by supported TLS stays unknown.
-- Detaching only the private egress publisher retains its old positive flow;
+- Fault-only suppression of egress map writes retains an old positive flow;
   a second LSM send still makes guarded lookup reject that retained entry.
+  Actual egress detach now revokes the [observer session](LIFETIME.md).
 - Deleting diagnostic snapshot/flow records and sending through a replacement
   TLS object cannot reset ambiguity on the same live socket.
 - Filling all 256 guard slots, including closed sockets, makes the next creation
@@ -111,6 +112,7 @@ sequence positions, keeping control packets unknown and excluding mismatched
 payloads through this same guard. Deferred output and automatic retransmission
 are tested within that scope. Reinjection and other kernel send paths remain
 outside it. Mutating one SSL object's fields concurrently is unsupported.
-Flow tuple reuse, observer
-detachment/replacement, map lifetime and Mihomo's routing deadline also remain
-open. These maps are still diagnostic, with no routing integration or public ABI.
+The [lifetime follow-up](LIFETIME.md) adds socket retirement, tuple-reuse tests and
+checked in-process observer sessions. Independent service operation and Mihomo's
+routing deadline remain open. These maps are still diagnostic, with no routing
+integration or public ABI.

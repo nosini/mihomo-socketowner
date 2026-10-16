@@ -67,17 +67,13 @@ func (p *probe) publicationWord() (uint64, error) {
 
 func lookupPublished[T sendRecord](p *probe, name string, key interface{}) (T, error) {
 	lookup := func(value *T) error { return p.collection.Maps[name].Lookup(key, value) }
-	if p.publication == nil {
+	if !p.liveSend {
 		// The intentionally unsafe baseline retains its original behavior.
 		var value T
 		err := lookup(&value)
 		return value, err
 	}
-	return readSendPublished(p.publicationWord, lookup, func(cookie uint64) (uint64, error) {
-		var state uint64
-		err := p.collection.Maps["send_guards"].Lookup(cookie, &state)
-		return state, err
-	})
+	return lookupSession[T](p, name, key)
 }
 
 // Guard lookup belongs inside the same publication interval as the record.

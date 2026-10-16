@@ -58,9 +58,10 @@ is not a proposed routing wait policy.
 
 Failure disables hostname publication for the entire collection, including older
 and newly opened sockets. The failed collection cannot recover in place. A fresh
-collection starts with fresh control and record maps, but safely replacing an
-observer and handling already-open sockets remains separate work. A reader must
-never combine one collection's control map with another's data maps.
+collection starts with fresh control and record maps. The
+[lifetime follow-up](LIFETIME.md) now binds the in-process reader to its original
+links and map identities; restart leaves already-open sockets unknown. A reader
+must never combine one collection's control map with another's data maps.
 
 Socket creation, sends and egress still return their normal allow result; an
 earlier LSM denial is preserved. Failure affects optional metadata availability,
@@ -118,6 +119,7 @@ identify socket, flow or observer lifetimes, serialize sends, or establish which
 send produced a packet. The [send-order guard](SEND_ORDER.md) separately excludes
 multiple attempts on a socket, including concurrent and corked writes. The
 [packet comparison](PACKET.md) matches eligible first-write bytes and sequence
-positions. Reinjection, tuple reuse, detached observation and Mihomo's route
+positions. [Lifetime checks](LIFETIME.md) add socket retirement and in-process
+observer identity. Independent service operation, reinjection and Mihomo's route
 commitment still need proofs. A stable successful read alone is not routing-safe
 hostname evidence.

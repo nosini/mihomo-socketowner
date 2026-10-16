@@ -108,10 +108,11 @@ SSL object's fields. Exact comparisons make changed transport bytes unknown;
 the verified TLS object's hostname relationship still needs that userspace
 lifetime assumption.
 
-The tested emitted byte window does not establish flow/observer lifetime or
-Mihomo's routing deadline. Tuple reuse, stopped/replaced links, already-open
-sockets, map replacement, reinjection, other interception modes, completed TLS,
-ECH/browser coverage, minimal privileges and performance remain unverified.
+The [lifetime follow-up](LIFETIME.md) adds socket retirement, tuple-reuse tests and
+in-process session revocation for stopped/replaced links and maps. Independent
+service crashes, Mihomo's routing deadline, reinjection, other interception modes,
+completed TLS, ECH/browser coverage, minimal privileges and performance remain
+unverified.
 The prototype performs up to one skb read helper per payload byte; its cost and
 4 KiB per-socket storage need measurement before wider use. No routing reader
 should treat these private records as authoritative yet.

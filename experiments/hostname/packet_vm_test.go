@@ -21,6 +21,7 @@ const sendBytesMax = 4096
 type sendEvidence struct {
 	Sequence, Len uint32
 	Bytes         [sendBytesMax]byte
+	LifetimeReady uint64
 }
 
 // Socket-filter TestRun consumes the Ethernet header before executing BPF.

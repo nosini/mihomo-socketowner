@@ -69,8 +69,17 @@ Control packets stay unknown; mismatched or unsupported packets exclude the
 socket. IPv4/IPv6 tests cover ACKs while a ClientHello remains corked, automatic
 TCP retransmission, modified payloads and oversized writes without blocking TLS.
 
-Milestone 1 remains open: broader send coverage, reinjection, flow/observer
-generations and Mihomo's actual routing deadline still need proof.
+The [lifetime follow-up](../experiments/hostname/LIFETIME.md) registers direct
+cgroup release/state callbacks and retires closed socket cookies without relying
+on successful record deletion or replacement. Tests cover final close, peer
+FIN/RST, target exit and exact tuple reuse with old positive entries retained.
+The in-process reader also binds itself to original link/program/map identities,
+revokes stopped or changed sessions, and leaves already-open sockets unknown
+after restart. Cross-process observer authority and crash handling remain work
+for independent service integration.
+
+Milestone 1 remains open: broader send coverage, reinjection and Mihomo's actual
+routing deadline still need proof; independent-service operation remains later.
 These diagnostic maps must not become a routing interface without that work.
 
 ## Objective

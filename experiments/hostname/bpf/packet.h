@@ -5,6 +5,7 @@ struct send_evidence {
 	__u32 sequence;
 	__u32 len; // published last by the sole eligible LSM writer
 	__u8 bytes[SEND_BYTES_MAX];
+	__u64 lifetime_ready;
 };
 struct flow_key {
 	__u64 netns;

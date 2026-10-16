@@ -95,20 +95,15 @@ func TestVMSendUnsupportedFirstAttempt(t *testing.T) {
 }
 
 func TestVMSendRejectsRetainedFlow(t *testing.T) {
-	f := newFixtureMode(t, "tcp4", true)
-	disableHandshakeProbe(t, f)
+	f := newPublicationFixture(t, "tcp4")
 	c := f.open("first.test", "fd-first", "fd")
 	f.command("handshake %d", c.slot)
 	if name, err := f.flow(c).Observation.hostname(); err != nil || name != "first.test" {
 		t.Fatalf("initial flow %q: %v", name, err)
 	}
-	// Detach only the private egress publisher: no later packet can replace
-	// its old positive flow entry. The independently checked send guard must
-	// invalidate that entry even without any successful flow-map update.
-	if err := f.probe.egress.Close(); err != nil {
-		t.Fatal(err)
-	}
-	f.probe.egress = nil
+	// The fault object suppresses flow writes without breaking link health.
+	// The independent guard must reject retained data without replacement.
+	f.fault(publicationFault{Mask: 64})
 	alias := f.alias(c, "second.test")
 	f.command("handshake %d", alias.slot)
 	var retained flowObservation

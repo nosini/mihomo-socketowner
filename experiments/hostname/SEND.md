@@ -16,8 +16,10 @@ rejects records after failed map writes or scope-storage creation. A separate
 [send-order guard](SEND_ORDER.md) now excludes every socket after its second
 send attempt, addressing a reproduced corked-write counterexample. A bounded
 [packet comparison](PACKET.md) now ties eligible payloads to captured write bytes
-and TCP sequence positions. Flow/observer lifetime still needs proof before
-routing use. No Mihomo routing or service integration is enabled.
+and TCP sequence positions. [Lifetime checks](LIFETIME.md) now retire closed
+sockets and revoke detached/replaced in-process observer sessions. Routing timing
+and independent-service operation still need proof. No Mihomo routing or service
+integration is enabled.
 
 ## Running
 
@@ -157,6 +159,8 @@ The combined VM suite and local unit/vet checks pass. The send tests cover:
 - First-write payload comparison, unknown ACKs during corking, automatic TCP
   retransmission, modified bytes and oversized ClientHellos; see [PACKET.md](PACKET.md)
   for the 4 KiB limit and synthetic parser/window tests.
+- Final close, peer FIN/RST, tuple reuse with retained records, link/map
+  replacement and checked in-process stop/restart; see [LIFETIME.md](LIFETIME.md).
 
 The TLS peer stops after reading ClientHello. Completed TLS, ECH, real encrypted
 DNS, browser builds, Flatpak, TUN, TPROXY, explicit proxies, performance, minimal
@@ -169,9 +173,10 @@ capabilities and service confinement remain unverified.
    Multiple attempts remain excluded. Supporting them needs attribution across
    retries and corked/coalesced writes. Reinjection and other kernel send paths
    still need explicit scope and tests.
-2. **Flow and observer generations.** Prove tuple reuse, removal/replacement of
-   observer links/maps, and unknown-flow publication under failure. Already-open
-   descriptors must not keep old metadata usable after observation stops.
+2. **Independent observer operation.** Socket retirement, tuple reuse and
+   in-process link/map identity checks are tested. An external reader still
+   needs an explicit authority/reconnect contract, independent observer-crash
+   tests, least-privilege separation and a versioned optional ABI.
 3. **Routing deadline.** The tests prove a map is available at first ClientHello
    reception in their controlled listener, not Mihomo's actual route commitment.
    Demonstrate a bounded wait and destination preservation in one real inbound

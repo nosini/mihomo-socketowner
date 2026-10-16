@@ -39,7 +39,11 @@ type probe struct {
 	cgroup      link.Link
 	send        link.Link
 	egress      link.Link
+	release     link.Link
+	lifetime    link.Link
 	publication *ebpf.Map // owned by collection, always read afresh
+	liveSend    bool
+	session     *observerSession
 }
 
 func checkBinary(path, want string) error {
@@ -146,7 +150,7 @@ func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bo
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot experiment: %w", err)
 	}
-	p := &probe{collection: coll}
+	p := &probe{collection: coll, liveSend: liveSend}
 	if liveSend {
 		p.publication = coll.Maps["publication_state"]
 	}
@@ -174,6 +178,14 @@ func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bo
 		return nil, err
 	}
 	if liveSend {
+		p.release, err = link.AttachCgroup(link.CgroupOptions{Path: cgroup, Attach: ebpf.AttachCgroupInetSockRelease, Program: coll.Programs["release_send"]})
+		if err != nil {
+			return nil, err
+		}
+		p.lifetime, err = link.AttachCgroup(link.CgroupOptions{Path: cgroup, Attach: ebpf.AttachCGroupSockOps, Program: coll.Programs["lifetime_send"]})
+		if err != nil {
+			return nil, err
+		}
 		p.send, err = link.AttachLSM(link.LSMOptions{Program: coll.Programs["observe_send"]})
 		if err != nil {
 			return nil, err
@@ -182,11 +194,37 @@ func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bo
 		if err != nil {
 			return nil, err
 		}
+		p.session, err = newObserverSession(p)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return p, nil
 }
 
 func (p *probe) close() {
+	p.stop()
+	if p.session != nil {
+		p.session.close()
+	}
+	if p.collection != nil {
+		p.collection.Close()
+	}
+}
+
+// Revoke readers before detaching any observation. Maps may remain alive for
+// diagnostics; stopping never makes a previous session eligible again.
+func (p *probe) stop() {
+	if p.session != nil {
+		p.session.mu.Lock()
+		defer p.session.mu.Unlock()
+		p.session.revoked.Store(true)
+		for _, l := range p.session.links {
+			if l.lease != nil {
+				l.lease.Close()
+			}
+		}
+	}
 	if p.egress != nil {
 		p.egress.Close()
 	}
@@ -199,8 +237,11 @@ func (p *probe) close() {
 	if p.cgroup != nil {
 		p.cgroup.Close()
 	}
-	if p.collection != nil {
-		p.collection.Close()
+	if p.release != nil {
+		p.release.Close()
+	}
+	if p.lifetime != nil {
+		p.lifetime.Close()
 	}
 }
 

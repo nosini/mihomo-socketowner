@@ -44,8 +44,9 @@ struct {
 } send_snapshots SEC(".maps");
 
 // Monotonic, non-evicting state: 0 = no attempt, 1 = exactly one attempt,
-// 3 = permanently ambiguous. A second send is excluded even if sequential or
-// identically named: TCP may still hold bytes from the first. Never delete or
+// 3 = permanently excluded (ambiguous, unsupported, or retired). A second
+// send is excluded even if sequential or identically named: TCP may still hold
+// bytes from the first. Never delete or
 // reinitialize these entries while this observer collection is in use.
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -78,6 +79,55 @@ int seed_send(struct bpf_sock *sk)
 			publication_fail(publication);
 		publication_end(publication);
 	}
+	return 1;
+}
+
+// Retire without deleting either records or their non-evicting validity key.
+// This hook runs at protocol release, even while TCP retains orphaned state.
+SEC("cgroup/sock_release")
+int release_send(struct bpf_sock *sk)
+{
+	__u64 cookie = bpf_get_socket_cookie(sk);
+	__u64 *guard = bpf_map_lookup_elem(&send_guards, &cookie);
+	if (!guard)
+		return 1; // not created in this observer's tracked scope
+	__u64 *publication = publication_begin();
+	if (publication) {
+		__sync_fetch_and_or(guard, 3);
+		publication_end(publication);
+	}
+	return 1;
+}
+
+SEC("sockops")
+int lifetime_send(struct bpf_sock_ops *ctx)
+{
+	if (!ctx->is_fullsock ||
+	    (ctx->op != BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB && ctx->op != BPF_SOCK_OPS_STATE_CB))
+		return 1;
+	__u64 cookie = bpf_get_socket_cookie(ctx);
+	__u64 *guard = bpf_map_lookup_elem(&send_guards, &cookie);
+	if (!guard)
+		return 1;
+	__u64 *publication = publication_begin();
+	if (!publication)
+		return 1;
+	if (ctx->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {
+		struct bpf_sock *sk = ctx->sk;
+		struct send_evidence *evidence = sk ? bpf_sk_storage_get(&send_scope, sk, 0, 0) : 0;
+		long error = bpf_sock_ops_cb_flags_set(ctx,
+			ctx->bpf_sock_ops_cb_flags | BPF_SOCK_OPS_STATE_CB_FLAG |
+			((fault_mask() & FAULT_STATE_FLAGS) ? (1U << 30) : 0));
+		if (!evidence || error) {
+			save_publication_error(error);
+			publication_fail(publication);
+		} else {
+			evidence->lifetime_ready = 1;
+		}
+	} else if (ctx->args[1] != 1) { // any non-ESTABLISHED state
+		__sync_fetch_and_or(guard, 3);
+	}
+	publication_end(publication);
 	return 1;
 }
 
@@ -154,7 +204,7 @@ static __always_inline int capture_send(struct send_evidence *evidence,
 	struct tcp_sock *tcp = (void *)sk;
 	__u32 sequence, next, unacked;
 	__u64 buffer = 0, count = 0;
-	if (size <= 0 || size > SEND_BYTES_MAX ||
+	if (evidence->lifetime_ready != 1 || size <= 0 || size > SEND_BYTES_MAX ||
 	    BPF_CORE_READ(sk, __sk_common.skc_state) != 1 ||
 	    BPF_CORE_READ(msg, msg_iter.iter_type) != bpf_core_enum_value(enum iter_type, ITER_UBUF) ||
 	    BPF_CORE_READ(msg, msg_iter.data_source) != 1 ||
@@ -321,6 +371,8 @@ int observe_flow(struct __sk_buff *skb)
 		__builtin_memcpy(&record.observation, name, sizeof(*name));
 	// The SYN also publishes, with unknown hostname. Never wait until a name
 	// exists to replace a previous cookie at a reused flow key.
+	if (fault_mask() & FAULT_HOLD_FLOW)
+		goto done;
 	{
 		long error = bpf_map_update_elem(&send_flows, &packet.key, &record,
 			(fault_mask() & FAULT_FLOW) ? BPF_NOEXIST :

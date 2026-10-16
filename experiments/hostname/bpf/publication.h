@@ -61,6 +61,8 @@ static __always_inline void publication_end(__u64 *state)
 #define FAULT_SEND_INSERT 8
 #define FAULT_FLOW_INSERT 16
 #define FAULT_GUARD_INSERT 32
+#define FAULT_HOLD_FLOW 64
+#define FAULT_STATE_FLAGS 128
 struct publication_fault {
 	__u64 mask;
 	__u64 initial_state;
@@ -130,4 +132,6 @@ int test_publication(struct __sk_buff *skb)
 #define FAULT_SEND_INSERT 8
 #define FAULT_FLOW_INSERT 16
 #define FAULT_GUARD_INSERT 32
+#define FAULT_HOLD_FLOW 64
+#define FAULT_STATE_FLAGS 128
 #endif

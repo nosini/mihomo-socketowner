@@ -119,8 +119,11 @@ sockets permanently after a second send attempt, including parallel/corked write
 that could otherwise mislabel earlier bytes. Its bounded
 [packet comparison](../experiments/hostname/PACKET.md) now matches emitted payloads
 to captured first-write bytes and sequence positions, including deferred and
-retransmitted data. Flow/observer generations and the routing deadline still
-require work before routing integration.
+retransmitted data. Its [lifetime checks](../experiments/hostname/LIFETIME.md)
+invalidate released/closed sockets and retained records through tuple reuse,
+link/map replacement and in-process stop/restart. Independent-service authority,
+privilege separation and the routing deadline still require work before routing
+integration.
 
 ## Independent distribution
 

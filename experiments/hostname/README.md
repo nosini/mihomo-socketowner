@@ -16,8 +16,10 @@ collisions. Its [publication guard](PUBLICATION.md) rejects stale records after
 map-update or socket-storage failure. A [send-order guard](SEND_ORDER.md) rejects
 every socket after its second send attempt, following a reproduced corked-write
 counterexample. Its [packet comparison](PACKET.md) matches emitted payloads to
-captured first-write bytes and TCP sequence positions. Flow/observer lifetime
-requirements remain open; both experiments still keep all records private.
+captured first-write bytes and TCP sequence positions. Its
+[lifetime checks](LIFETIME.md) retire closed sockets and revoke stopped/replaced
+in-process sessions. Independent service operation and routing timing remain
+open; both experiments still keep all records private.
 
 ## Running
 

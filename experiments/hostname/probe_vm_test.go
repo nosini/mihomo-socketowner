@@ -31,6 +31,8 @@ type fixture struct {
 	probe        *probe
 	pid          uint32
 	observations string
+
+	object, cgroup, sslPath, cryptoPath string
 }
 
 type connection struct {
@@ -136,6 +138,7 @@ func newFixtureObject(t *testing.T, network string, liveSend bool, override stri
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.object, f.cgroup, f.sslPath, f.cryptoPath = object, cgroup, ssl, crypto
 	t.Cleanup(f.probe.close)
 	return f
 }
