@@ -11,12 +11,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 struct connection { SSL *ssl; int fd; int used; } connections[128];
 static SSL_CTX *ctx;
 static int family, port;
 static const char *address;
+static int source_port;
+static char destination[64];
 static uintptr_t last_freed_ssl;
 static unsigned int reused_objects;
 
@@ -26,6 +29,17 @@ static int connect_socket(void)
 {
 	int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	check(fd >= 0, "socket");
+	int one = 1;
+	check(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == 0, "reuse address");
+	{ // Keep the source address identical when forcing redirect collisions.
+		if (family == AF_INET) {
+			struct sockaddr_in local = {.sin_family = AF_INET, .sin_port = htons(source_port), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+			check(bind(fd, (void *)&local, sizeof(local)) == 0, "bind source");
+		} else {
+			struct sockaddr_in6 local = {.sin6_family = AF_INET6, .sin6_port = htons(source_port), .sin6_addr = IN6ADDR_LOOPBACK_INIT};
+			check(bind(fd, (void *)&local, sizeof(local)) == 0, "bind source");
+		}
+	}
 	if (family == AF_INET) {
 		struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(port)};
 		check(inet_pton(family, address, &a.sin_addr) == 1, "address");
@@ -45,7 +59,11 @@ static void report(int i)
 	// The test independently checks the BPF program generated this cookie
 	// already; SO_COOKIE could itself generate one if the hook failed.
 	check(getsockopt(connections[i].fd, SOL_SOCKET, SO_COOKIE, &cookie, &len) == 0, "SO_COOKIE");
-	printf("socket %d %" PRIu64 " %d\n", i, cookie, connections[i].fd);
+	struct sockaddr_storage local;
+	len = sizeof(local);
+	check(getsockname(connections[i].fd, (void *)&local, &len) == 0, "getsockname");
+	unsigned short local_port = family == AF_INET ? ((struct sockaddr_in *)&local)->sin_port : ((struct sockaddr_in6 *)&local)->sin6_port;
+	printf("socket %d %" PRIu64 " %d %u\n", i, cookie, connections[i].fd, ntohs(local_port));
 }
 static SSL *new_ssl(int fd, const char *name, const char *order, const char *mode)
 {
@@ -95,6 +113,15 @@ int main(int argc, char **argv)
 	while (fgets(line, sizeof(line), stdin)) {
 		int i = -1;
 		check(sscanf(line, "%31s", op) == 1, "command");
+		if (!strcmp(op, "source")) {
+			check(sscanf(line, "%*s %d", &source_port) == 1, "source port");
+			puts("ok"); continue;
+		}
+		if (!strcmp(op, "destination")) {
+			check(sscanf(line, "%*s %63s %d", destination, &port) == 2, "destination");
+			address = destination;
+			puts("ok"); continue;
+		}
 		if (!strcmp(op, "stats")) {
 			printf("stats %u\n", reused_objects);
 			continue;
@@ -120,6 +147,30 @@ int main(int argc, char **argv)
 			pthread_t t;
 			check(pthread_create(&t, NULL, handshake, &i) == 0, "pthread_create");
 			check(pthread_join(t, NULL) == 0, "pthread_join");
+		} else if (!strcmp(op, "implicit")) {
+			size_t written = 0;
+			int ret = SSL_write_ex(c->ssl, "x", 1, &written);
+			printf("implicit %d %d %d\n", i, ret, SSL_get_error(c->ssl, ret));
+		} else if (!strcmp(op, "alias")) {
+			check(sscanf(line, "%*s %*d %511s", name) == 1, "alias");
+			int j;
+			for (j = 0; j < 128 && connections[j].used; j++);
+			check(j < 128, "alias slots");
+			int fd = fcntl(c->fd, F_DUPFD_CLOEXEC, 256);
+			check(fd >= 0, "alias dup");
+			connections[j] = (struct connection){.ssl = new_ssl(fd, name, "fd-first", "fd"), .fd = fd, .used = 1};
+			report(j);
+		} else if (!strcmp(op, "raw") || !strcmp(op, "raw-child")) {
+			if (!strcmp(op, "raw-child")) {
+				pid_t child = fork();
+				check(child >= 0, "fork");
+				if (!child) _exit(write(c->fd, "x", 1) == 1 ? 0 : 1);
+				int status;
+				check(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0, "child write");
+			} else {
+				check(write(c->fd, "x", 1) == 1, "raw write");
+			}
+			puts("ok");
 		} else if (!strcmp(op, "fail")) {
 			BIO_set_callback_ex(SSL_get_wbio(c->ssl), reject_write);
 			handshake(&i);

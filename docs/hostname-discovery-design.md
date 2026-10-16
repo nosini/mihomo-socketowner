@@ -36,6 +36,22 @@ close/replacement. The experiment README records reproduction commands, evidence
 and next steps. No public pins, owner ABI, Mihomo routing or service changes have
 been introduced.
 
+### Live send correlation follow-up
+
+The [live send-hook experiment](../experiments/hostname/SEND.md) reads the active
+TLS connection from known live call frames at `lsm/socket_sendmsg` and associates
+it with the kernel-held socket for that write. It needs no cached handshake
+observation and does not traverse the process descriptor table. Tests address
+the abandoned-setup counterexample with the handshake uprobe disabled, including
+two live TLS objects sharing a socket. A private packet map also resolves direct
+and REDIRECT flows through forced IPv4/IPv6 source-port collisions, with original
+destinations verified independently.
+
+Milestone 1 remains open: publication failures, overlapping sends/deferred packet
+output on one socket, flow/observer generations and Mihomo's actual routing
+deadline still need proof. These diagnostic maps must not become a routing
+interface without that work.
+
 ## Objective
 
 Make application-level destination hostnames available to Mihomo's domain routing

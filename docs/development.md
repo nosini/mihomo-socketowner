@@ -109,6 +109,12 @@ It demonstrates ordinary correlation and a missed-observation counterexample;
 its snapshots must not be consumed as routing evidence. It has no public pins
 and does not change the owner loader or ABI.
 
+The [live send-hook experiment](../experiments/hostname/SEND.md) reads the active
+TLS object from a verified call chain at the kernel's send hook. It addresses
+that counterexample and tests full flow mapping through IPv4/IPv6 REDIRECT port
+collisions. Publication failure, overlapping sends on one socket and observer
+generations still require work before routing integration.
+
 ## Independent distribution
 
 Build and distribute the loader from this repository, including its license and

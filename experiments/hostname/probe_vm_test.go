@@ -24,24 +24,34 @@ import (
 )
 
 type fixture struct {
-	t        *testing.T
-	stdin    io.WriteCloser
-	stdout   *bufio.Scanner
-	listener *net.TCPListener
-	probe    *probe
-	pid      uint32
+	t            *testing.T
+	stdin        io.WriteCloser
+	stdout       *bufio.Scanner
+	listener     *net.TCPListener
+	probe        *probe
+	pid          uint32
+	observations string
 }
 
 type connection struct {
-	slot   int
-	cookie uint64
-	fd     int
-	server *net.TCPConn
+	slot      int
+	cookie    uint64
+	fd        int
+	localPort int
+	server    *net.TCPConn
 }
 
 func newFixture(t *testing.T, network string) *fixture {
 	t.Helper()
+	return newFixtureMode(t, network, false)
+}
+
+func newFixtureMode(t *testing.T, network string, liveSend bool) *fixture {
+	t.Helper()
 	object, client := os.Getenv("HOSTNAME_VM_OBJECT"), os.Getenv("HOSTNAME_VM_CLIENT")
+	if liveSend {
+		object = os.Getenv("HOSTNAME_VM_SEND_OBJECT")
+	}
 	if object == "" || client == "" {
 		t.Skip("set HOSTNAME_VM_OBJECT and HOSTNAME_VM_CLIENT in the test VM")
 	}
@@ -84,7 +94,10 @@ func newFixture(t *testing.T, network string) *fixture {
 	var finishOnce sync.Once
 	finish := func() { finishOnce.Do(func() { in.Close(); cancel(); cmd.Wait() }) }
 	t.Cleanup(finish)
-	f := &fixture{t: t, stdin: in, stdout: bufio.NewScanner(out), listener: l, pid: uint32(cmd.Process.Pid)}
+	f := &fixture{t: t, stdin: in, stdout: bufio.NewScanner(out), listener: l, pid: uint32(cmd.Process.Pid), observations: "snapshots"}
+	if liveSend {
+		f.observations = "send_snapshots"
+	}
 	if line := f.read(); line != "ready" {
 		t.Fatalf("client: %s", line)
 	}
@@ -111,7 +124,7 @@ func newFixture(t *testing.T, network string) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.probe, err = attach(object, cgroup, ssl, crypto, cmd.Process.Pid)
+	f.probe, err = attachMode(object, cgroup, ssl, crypto, cmd.Process.Pid, liveSend)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +149,7 @@ func (f *fixture) command(format string, args ...interface{}) string {
 func (f *fixture) accepted(line string) connection {
 	f.t.Helper()
 	var c connection
-	if n, err := fmt.Sscanf(line, "socket %d %d %d", &c.slot, &c.cookie, &c.fd); err != nil || n != 3 || c.cookie == 0 {
+	if n, err := fmt.Sscanf(line, "socket %d %d %d %d", &c.slot, &c.cookie, &c.fd, &c.localPort); err != nil || n != 4 || c.cookie == 0 {
 		f.t.Fatalf("socket response %q: %v", line, err)
 	}
 	var seeded uint64
@@ -161,14 +174,14 @@ func (f *fixture) open(name, order, mode string) connection {
 func (f *fixture) absent(c connection) {
 	f.t.Helper()
 	var o observation
-	if err := f.probe.collection.Maps["snapshots"].Lookup(c.cookie, &o); !errors.Is(err, ebpf.ErrKeyNotExist) {
+	if err := f.probe.collection.Maps[f.observations].Lookup(c.cookie, &o); !errors.Is(err, ebpf.ErrKeyNotExist) {
 		f.t.Fatalf("expected unknown cookie %d; got %+v, %v", c.cookie, o, err)
 	}
 }
 func (f *fixture) lookup(c connection) observation {
 	f.t.Helper()
 	var o observation
-	if err := f.probe.collection.Maps["snapshots"].Lookup(c.cookie, &o); err != nil {
+	if err := f.probe.collection.Maps[f.observations].Lookup(c.cookie, &o); err != nil {
 		f.t.Fatal(err)
 	}
 	if o.Cookie != c.cookie || o.TGID != f.pid || o.FD != int32(c.fd) || o.BootNS == 0 {

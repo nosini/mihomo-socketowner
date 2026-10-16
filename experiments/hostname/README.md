@@ -9,6 +9,12 @@ discovery, with no public map interface or Mihomo integration.
 reproduces a stale-name counterexample on a single live TCP socket. Resolving
 that problem is required before adding a routing reader.
 
+A second [live send-hook experiment](SEND.md) now addresses that specific
+counterexample without depending on handshake uprobes or descriptor-table
+traversal. It also tests full flow identity through IPv4/IPv6 REDIRECT source-port
+collisions. Its remaining publication and concurrent-send requirements are
+documented separately; both experiments still keep all records private.
+
 ## Running
 
 Use a disposable Linux x86-64 test VM with cgroup v2, kernel BTF, uprobe support,

@@ -19,6 +19,7 @@ import (
 const (
 	sslSHA256       = "2dead83fbc10ddfbc6240921ebe691995df7753e1a11319de923534e4c992064"
 	cryptoSHA256    = "f1b2c9b4070ea2724480a3f0d65e0f80b5d5665782e0de18e7190a0348f33c0b"
+	libcSHA256      = "090f858814642a3f28e5f4ae6499667e7901e47902ca3e72fb9c8a1967a3b8df"
 	socketMethodRVA = 0x654620
 )
 
@@ -36,6 +37,8 @@ type probe struct {
 	collection *ebpf.Collection
 	uprobe     link.Link
 	cgroup     link.Link
+	send       link.Link
+	egress     link.Link
 }
 
 func checkBinary(path, want string) error {
@@ -78,6 +81,10 @@ func mappingBase(maps, path string) (uint64, error) {
 // attach is deliberately private to the experiment. Target PID and exact
 // binaries are mandatory; there is no system-wide discovery or attachment.
 func attach(object, cgroup, sslPath, cryptoPath string, pid int) (_ *probe, err error) {
+	return attachMode(object, cgroup, sslPath, cryptoPath, pid, false)
+}
+
+func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bool) (_ *probe, err error) {
 	if pid <= 0 {
 		return nil, fmt.Errorf("target PID must be positive")
 	}
@@ -91,7 +98,8 @@ func attach(object, cgroup, sslPath, cryptoPath string, pid int) (_ *probe, err 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := mappingBase(string(maps), sslPath); err != nil {
+	sslBase, err := mappingBase(string(maps), sslPath)
+	if err != nil {
 		return nil, err
 	}
 	base, err := mappingBase(string(maps), cryptoPath)
@@ -102,9 +110,23 @@ func attach(object, cgroup, sslPath, cryptoPath string, pid int) (_ *probe, err 
 	if err != nil {
 		return nil, err
 	}
-	for name, value := range map[string]interface{}{
+	constants := map[string]interface{}{
 		"target_tgid": uint32(pid), "socket_method": base + socketMethodRVA,
-	} {
+	}
+	if liveSend {
+		const libcPath = "/usr/lib64/libc.so.6"
+		if err := checkBinary(libcPath, libcSHA256); err != nil {
+			return nil, err
+		}
+		libcBase, err := mappingBase(string(maps), libcPath)
+		if err != nil {
+			return nil, err
+		}
+		constants["ssl_base"] = sslBase
+		constants["crypto_base"] = base
+		constants["libc_base"] = libcBase
+	}
+	for name, value := range constants {
 		v := spec.Variables[name]
 		if v == nil {
 			return nil, fmt.Errorf("missing BPF constant %s", name)
@@ -123,8 +145,12 @@ func attach(object, cgroup, sslPath, cryptoPath string, pid int) (_ *probe, err 
 			p.close()
 		}
 	}()
+	seed := "seed_cookie"
+	if liveSend {
+		seed = "seed_send"
+	}
 	p.cgroup, err = link.AttachCgroup(link.CgroupOptions{
-		Path: cgroup, Attach: ebpf.AttachCGroupInetSockCreate, Program: coll.Programs["seed_cookie"],
+		Path: cgroup, Attach: ebpf.AttachCGroupInetSockCreate, Program: coll.Programs[seed],
 	})
 	if err != nil {
 		return nil, err
@@ -137,10 +163,26 @@ func attach(object, cgroup, sslPath, cryptoPath string, pid int) (_ *probe, err 
 	if err != nil {
 		return nil, err
 	}
+	if liveSend {
+		p.send, err = link.AttachLSM(link.LSMOptions{Program: coll.Programs["observe_send"]})
+		if err != nil {
+			return nil, err
+		}
+		p.egress, err = link.AttachCgroup(link.CgroupOptions{Path: cgroup, Attach: ebpf.AttachCGroupInetEgress, Program: coll.Programs["observe_flow"]})
+		if err != nil {
+			return nil, err
+		}
+	}
 	return p, nil
 }
 
 func (p *probe) close() {
+	if p.egress != nil {
+		p.egress.Close()
+	}
+	if p.send != nil {
+		p.send.Close()
+	}
 	if p.uprobe != nil {
 		p.uprobe.Close()
 	}
