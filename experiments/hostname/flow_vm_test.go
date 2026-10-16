@@ -26,7 +26,7 @@ type flowObservation struct {
 	Observation observation
 }
 
-func (f *fixture) flow(c connection) flowObservation {
+func (f *fixture) flowKey(c connection) flowKey {
 	f.t.Helper()
 	peer := c.server.RemoteAddr().(*net.TCPAddr).AddrPort()
 	local := c.server.LocalAddr().(*net.TCPAddr).AddrPort()
@@ -47,9 +47,14 @@ func (f *fixture) flow(c connection) flowObservation {
 	if acceptedCookie == c.cookie {
 		f.t.Fatal("test did not distinguish accepted and application sockets")
 	}
-	key := flowKey{Netns: ns, Source: peer.Addr().As16(), Destination: local.Addr().As16(), SourcePort: peer.Port(), DestinationPort: local.Port()}
-	var o flowObservation
-	if err := f.probe.collection.Maps["send_flows"].Lookup(key, &o); err != nil {
+	return flowKey{Netns: ns, Source: peer.Addr().As16(), Destination: local.Addr().As16(), SourcePort: peer.Port(), DestinationPort: local.Port()}
+}
+
+func (f *fixture) flow(c connection) flowObservation {
+	f.t.Helper()
+	key := f.flowKey(c)
+	o, err := stableLookup[flowObservation](f, "send_flows", key)
+	if err != nil {
 		f.t.Fatalf("flow %+v: %v", key, err)
 	}
 	if o.Cookie != c.cookie {

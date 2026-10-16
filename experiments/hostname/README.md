@@ -12,8 +12,9 @@ that problem is required before adding a routing reader.
 A second [live send-hook experiment](SEND.md) now addresses that specific
 counterexample without depending on handshake uprobes or descriptor-table
 traversal. It also tests full flow identity through IPv4/IPv6 REDIRECT source-port
-collisions. Its remaining publication and concurrent-send requirements are
-documented separately; both experiments still keep all records private.
+collisions. Its [publication guard](PUBLICATION.md) rejects stale records after
+map-update or socket-storage failure. Concurrent-send and observer-lifetime
+requirements remain open; both experiments still keep all records private.
 
 ## Running
 

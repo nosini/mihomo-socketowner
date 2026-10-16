@@ -11,9 +11,11 @@ now produces no send record for the abandoned attempt and the correct hostname
 for the replacement's first ClientHello. The original unsafe experiment and test
 remain available as a comparison.
 
-This is still a diagnostic prototype. Its private maps do not yet provide safe
-publication, concurrent-operation or observer-replacement semantics for a routing
-reader. No Mihomo routing or service integration is enabled.
+This is still a diagnostic prototype. A [publication guard](PUBLICATION.md) now
+rejects records after failed map writes or scope-storage creation. Concurrent
+operations and observer replacement still need correctness proofs before a
+routing reader can use these records. No Mihomo routing or service integration
+is enabled.
 
 ## Running
 
@@ -34,7 +36,7 @@ From the socketowner repository root, after building the baseline fixture,
 object and test executable as described in README.md:
 
 ```sh
-clang -O2 -g -Wall -Werror -D__TARGET_ARCH_x86 -target bpfel \
+clang -O2 -g -Wall -Werror -mcpu=v3 -D__TARGET_ARCH_x86 -target bpfel \
     -c experiments/hostname/bpf/send.c \
     -o experiments/hostname/build/send.o
 sudo env HOSTNAME_VM_OBJECT="$PWD/experiments/hostname/build/snapshot.o" \
@@ -142,6 +144,9 @@ The combined VM suite and local unit/vet checks pass. The send tests cover:
 - Memory BIOs and missing/malformed names producing no usable hostname.
 - Full flow lookup before/after TLS and forced REDIRECT source-port collisions
   for both IP families, with original destinations preserved.
+- Guarded publication, failed insertions/invalidation, scope-storage failure,
+  active writers and counter exhaustion; see [PUBLICATION.md](PUBLICATION.md)
+  for the protocol, fault-build command and limits.
 
 The TLS peer stops after reading ClientHello. Completed TLS, ECH, real encrypted
 DNS, browser builds, Flatpak, TUN, TPROXY, explicit proxies, performance, minimal
@@ -149,20 +154,16 @@ capabilities and service confinement remain unverified.
 
 ## Remaining correctness work
 
-1. **Publication and allocation failure.** A failed LRU update could leave an
-   older entry. A routing interface needs independent validity/generation checks
-   that remain reliable when map updates fail. The current private maps are not
-   acceptable as authoritative records.
-2. **Concurrent operations on one socket.** These tests interleave separate live
+1. **Concurrent operations on one socket.** These tests interleave separate live
    connections and keep multiple TLS objects alive, but do not prove ordering
    when multiple sends on one socket overlap. The LSM runs before TCP serializes
    writes. Reading the latest per-socket name at packet egress is insufficient
    without a proven association to the operation that produced that packet.
    Corking, deferred output, retransmission and reinjection need explicit scope.
-3. **Flow and observer generations.** Prove tuple reuse, removal/replacement of
+2. **Flow and observer generations.** Prove tuple reuse, removal/replacement of
    observer links/maps, and unknown-flow publication under failure. Already-open
    descriptors must not keep old metadata usable after observation stops.
-4. **Routing deadline.** The tests prove a map is available at first ClientHello
+3. **Routing deadline.** The tests prove a map is available at first ClientHello
    reception in their controlled listener, not Mihomo's actual route commitment.
    Demonstrate a bounded wait and destination preservation in one real inbound
    mode before adding routing metadata.

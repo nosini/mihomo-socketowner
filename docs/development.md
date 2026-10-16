@@ -112,8 +112,10 @@ and does not change the owner loader or ABI.
 The [live send-hook experiment](../experiments/hostname/SEND.md) reads the active
 TLS object from a verified call chain at the kernel's send hook. It addresses
 that counterexample and tests full flow mapping through IPv4/IPv6 REDIRECT port
-collisions. Publication failure, overlapping sends on one socket and observer
-generations still require work before routing integration.
+collisions. Its [publication guard](../experiments/hostname/PUBLICATION.md) rejects
+records after map-update or socket-storage failure, including retained stale
+values. Overlapping sends on one socket, flow/observer generations and the routing
+deadline still require work before routing integration.
 
 ## Independent distribution
 

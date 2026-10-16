@@ -34,11 +34,12 @@ type observation struct {
 }
 
 type probe struct {
-	collection *ebpf.Collection
-	uprobe     link.Link
-	cgroup     link.Link
-	send       link.Link
-	egress     link.Link
+	collection  *ebpf.Collection
+	uprobe      link.Link
+	cgroup      link.Link
+	send        link.Link
+	egress      link.Link
+	publication *ebpf.Map // owned by collection, always read afresh
 }
 
 func checkBinary(path, want string) error {
@@ -114,6 +115,9 @@ func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bo
 		"target_tgid": uint32(pid), "socket_method": base + socketMethodRVA,
 	}
 	if liveSend {
+		if err := validatePublicationMap(spec.Maps["publication_state"]); err != nil {
+			return nil, err
+		}
 		const libcPath = "/usr/lib64/libc.so.6"
 		if err := checkBinary(libcPath, libcSHA256); err != nil {
 			return nil, err
@@ -140,6 +144,9 @@ func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bo
 		return nil, fmt.Errorf("load snapshot experiment: %w", err)
 	}
 	p := &probe{collection: coll}
+	if liveSend {
+		p.publication = coll.Maps["publication_state"]
+	}
 	defer func() {
 		if err != nil {
 			p.close()

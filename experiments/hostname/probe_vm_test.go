@@ -48,9 +48,17 @@ func newFixture(t *testing.T, network string) *fixture {
 
 func newFixtureMode(t *testing.T, network string, liveSend bool) *fixture {
 	t.Helper()
+	return newFixtureObject(t, network, liveSend, "")
+}
+
+func newFixtureObject(t *testing.T, network string, liveSend bool, override string) *fixture {
+	t.Helper()
 	object, client := os.Getenv("HOSTNAME_VM_OBJECT"), os.Getenv("HOSTNAME_VM_CLIENT")
 	if liveSend {
 		object = os.Getenv("HOSTNAME_VM_SEND_OBJECT")
+	}
+	if override != "" {
+		object = override
 	}
 	if object == "" || client == "" {
 		t.Skip("set HOSTNAME_VM_OBJECT and HOSTNAME_VM_CLIENT in the test VM")
@@ -173,21 +181,33 @@ func (f *fixture) open(name, order, mode string) connection {
 }
 func (f *fixture) absent(c connection) {
 	f.t.Helper()
-	var o observation
-	if err := f.probe.collection.Maps[f.observations].Lookup(c.cookie, &o); !errors.Is(err, ebpf.ErrKeyNotExist) {
+	if o, err := lookupPublished[observation](f.probe, f.observations, c.cookie); !errors.Is(err, ebpf.ErrKeyNotExist) && !errors.Is(err, errPublicationBusy) && !errors.Is(err, errPublicationChanged) {
 		f.t.Fatalf("expected unknown cookie %d; got %+v, %v", c.cookie, o, err)
 	}
 }
 func (f *fixture) lookup(c connection) observation {
 	f.t.Helper()
-	var o observation
-	if err := f.probe.collection.Maps[f.observations].Lookup(c.cookie, &o); err != nil {
+	o, err := stableLookup[observation](f, f.observations, c.cookie)
+	if err != nil {
 		f.t.Fatal(err)
 	}
 	if o.Cookie != c.cookie || o.TGID != f.pid || o.FD != int32(c.fd) || o.BootNS == 0 {
 		f.t.Fatalf("incorrect socket identity: %+v, expected %+v PID %d", o, c, f.pid)
 	}
 	return o
+}
+
+// A test may wait briefly for unrelated ACK publication to finish. The reader
+// itself never retries or accepts a busy/changed control word.
+func stableLookup[T any](f *fixture, name string, key interface{}) (T, error) {
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for {
+		value, err := lookupPublished[T](f.probe, name, key)
+		if (!errors.Is(err, errPublicationBusy) && !errors.Is(err, errPublicationChanged)) || time.Now().After(deadline) {
+			return value, err
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 func wireName(t *testing.T, c connection) string {
 	t.Helper()

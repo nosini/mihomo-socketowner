@@ -114,8 +114,8 @@ func TestVMSendUnknownPathInvalidates(t *testing.T) {
 				t.Fatalf("initial name %q: %v", name, err)
 			}
 			f.command("%s %d", op, c.slot)
-			var o observation
-			if err := f.probe.collection.Maps["send_snapshots"].Lookup(c.cookie, &o); err != nil {
+			o, err := stableLookup[observation](f, "send_snapshots", c.cookie)
+			if err != nil {
 				t.Fatal(err)
 			}
 			if o.Cookie != c.cookie || o.Len != 0 || o.Pad != 1 {

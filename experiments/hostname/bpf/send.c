@@ -1,8 +1,9 @@
 // A separate experiment: derive the active SSL connection from verified live
 // call frames in socket_sendmsg. No previous uprobe/object/FD state is used.
-// Build flags are the same as snapshot.c. See ../SEND.md for the exact profile.
+// Requires -mcpu=v3 for publication atomics. See ../SEND.md for the profile.
 #include "snapshot.c"
 #include <bpf/bpf_endian.h>
+#include "publication.h"
 
 const volatile __u64 ssl_base;
 const volatile __u64 crypto_base;
@@ -34,10 +35,16 @@ int seed_send(struct bpf_sock *sk)
 	__u32 pid = bpf_get_current_pid_tgid() >> 32;
 	if (pid == target_tgid && (sk->family == 2 || sk->family == 10) &&
 	    sk->protocol == IPPROTO_TCP) {
+		__u64 *publication = publication_begin();
+		if (!publication)
+			return 1;
 		__u64 cookie = bpf_get_socket_cookie(sk);
 		__u32 zero = 0;
-		bpf_map_update_elem(&last_seeded, &zero, &cookie, BPF_ANY);
-		bpf_sk_storage_get(&send_scope, sk, &pid, BPF_SK_STORAGE_GET_F_CREATE);
+		if (!cookie || bpf_map_update_elem(&last_seeded, &zero, &cookie, BPF_ANY) ||
+		    !bpf_sk_storage_get(&send_scope, sk, &pid,
+			BPF_SK_STORAGE_GET_F_CREATE | ((fault_mask() & FAULT_SCOPE) ? 2 : 0)))
+			publication_fail(publication);
+		publication_end(publication);
 	}
 	return 1;
 }
@@ -113,6 +120,7 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	     int ret)
 {
 	struct sock *sk;
+	__u64 *publication;
 	struct observation o = {};
 	struct task_struct *task;
 	struct pt_regs___kernel *regs;
@@ -123,6 +131,9 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 		return ret;
 	sk = socket->sk;
 	if (!sk || !bpf_sk_storage_get(&send_scope, sk, 0, 0))
+		return 0;
+	publication = publication_begin();
+	if (!publication)
 		return 0;
 	o.cookie = bpf_get_socket_cookie(sk);
 	o.boot_ns = bpf_ktime_get_boot_ns();
@@ -166,9 +177,16 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	if (o.len)
 		o.pad = 0;
 publish:
-	// Diagnostic only: map update failure and simultaneous sends still need
-	// publication semantics before this could become a routing interface.
-	bpf_map_update_elem(&send_snapshots, &o.cookie, &o, BPF_ANY);
+	{
+		long error = bpf_map_update_elem(&send_snapshots, &o.cookie, &o,
+			(fault_mask() & FAULT_SEND) ? BPF_NOEXIST :
+			(fault_mask() & FAULT_SEND_INSERT) ? BPF_EXIST : BPF_ANY);
+		if (error) {
+			save_publication_error(error);
+			publication_fail(publication);
+		}
+	}
+	publication_end(publication);
 	return 0;
 }
 
@@ -195,6 +213,7 @@ SEC("cgroup_skb/egress")
 int observe_flow(struct __sk_buff *skb)
 {
 	struct bpf_sock *sk = skb->sk;
+	__u64 *publication;
 	struct flow_key key = {};
 	struct flow_observation record = {};
 	struct observation *name;
@@ -203,15 +222,19 @@ int observe_flow(struct __sk_buff *skb)
 	__u32 offset;
 
 	if (!sk || !(sk = bpf_sk_fullsock(sk)) ||
-	    !bpf_sk_storage_get(&send_scope, sk, 0, 0) ||
-	    bpf_skb_load_bytes(skb, 0, header, 20))
+	    !bpf_sk_storage_get(&send_scope, sk, 0, 0))
 		return 1;
+	publication = publication_begin();
+	if (!publication)
+		return 1;
+	if (bpf_skb_load_bytes(skb, 0, header, 20))
+		goto done;
 	if ((header[0] >> 4) == 4) {
 		if (header[9] != IPPROTO_TCP || (header[6] & 0x3f) || header[7])
-			return 1;
+			goto done;
 		offset = (header[0] & 15) * 4;
 		if (offset < 20)
-			return 1;
+			goto done;
 		key.source[10] = key.destination[10] = 0xff;
 		key.source[11] = key.destination[11] = 0xff;
 		__builtin_memcpy(&key.source[12], &header[12], 4);
@@ -219,15 +242,15 @@ int observe_flow(struct __sk_buff *skb)
 	} else if ((header[0] >> 4) == 6) {
 		// Extension-header paths are deliberately outside this experiment.
 		if (header[6] != IPPROTO_TCP || bpf_skb_load_bytes(skb, 0, header, 40))
-			return 1;
+			goto done;
 		offset = 40;
 		__builtin_memcpy(key.source, &header[8], 16);
 		__builtin_memcpy(key.destination, &header[24], 16);
 	} else {
-		return 1;
+		goto done;
 	}
 	if (bpf_skb_load_bytes(skb, offset, ports, sizeof(ports)))
-		return 1;
+		goto done;
 	key.source_port = bpf_ntohs(ports[0]);
 	key.destination_port = bpf_ntohs(ports[1]);
 	key.netns = bpf_get_netns_cookie(skb);
@@ -237,6 +260,16 @@ int observe_flow(struct __sk_buff *skb)
 		__builtin_memcpy(&record.observation, name, sizeof(*name));
 	// The SYN also publishes, with unknown hostname. Never wait until a name
 	// exists to replace a previous cookie at a reused flow key.
-	bpf_map_update_elem(&send_flows, &key, &record, BPF_ANY);
+	{
+		long error = bpf_map_update_elem(&send_flows, &key, &record,
+			(fault_mask() & FAULT_FLOW) ? BPF_NOEXIST :
+			(fault_mask() & FAULT_FLOW_INSERT) ? BPF_EXIST : BPF_ANY);
+		if (error) {
+			save_publication_error(error);
+			publication_fail(publication);
+		}
+	}
+done:
+	publication_end(publication);
 	return 1;
 }

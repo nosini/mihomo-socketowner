@@ -47,10 +47,16 @@ two live TLS objects sharing a socket. A private packet map also resolves direct
 and REDIRECT flows through forced IPv4/IPv6 source-port collisions, with original
 destinations verified independently.
 
-Milestone 1 remains open: publication failures, overlapping sends/deferred packet
-output on one socket, flow/observer generations and Mihomo's actual routing
-deadline still need proof. These diagnostic maps must not become a routing
-interface without that work.
+The [publication follow-up](../experiments/hostname/PUBLICATION.md) adds a
+preallocated atomic control word independent of record-map updates. A guarded
+reader rejects records while writers are active, across an intervening write,
+or permanently after any failed publication or scope-storage creation. VM fault
+tests retain old positive records through real kernel update errors and verify
+that the reader returns unknown while networking continues.
+
+Milestone 1 remains open: overlapping sends/deferred packet output on one socket,
+flow/observer generations and Mihomo's actual routing deadline still need proof.
+These diagnostic maps must not become a routing interface without that work.
 
 ## Objective
 
