@@ -101,6 +101,14 @@ When testing on a shared machine, use a dedicated `-pin` directory and pass its
 tests. The integration tests remain in mihomo because they exercise its reader
 and process matching, including missing/unsupported version markers.
 
+## Hostname discovery experiment
+
+The isolated [OpenSSL hostname/socket experiment](../experiments/hostname/README.md)
+contains a BPF probe, a controlled TLS client and opt-in privileged VM tests.
+It demonstrates ordinary correlation and a missed-observation counterexample;
+its snapshots must not be consumed as routing evidence. It has no public pins
+and does not change the owner loader or ABI.
+
 ## Independent distribution
 
 Build and distribute the loader from this repository, including its license and

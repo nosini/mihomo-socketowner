@@ -1,3 +1,4 @@
 /socketowner
 *.test
 *.out
+/experiments/hostname/build/
