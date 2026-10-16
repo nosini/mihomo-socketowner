@@ -3,6 +3,7 @@
 package hostname
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -12,8 +13,33 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/asm"
 	"golang.org/x/sys/unix"
 )
+
+// Privileged fault injection models LRU eviction through the kernel now that
+// flow descriptors are read-only. External authority also freezes these maps.
+func deleteVMFlow(t *testing.T, m *ebpf.Map, key flowKey) {
+	t.Helper()
+	var data bytes.Buffer
+	if err := binary.Write(&data, binary.LittleEndian, key); err != nil {
+		t.Fatal(err)
+	}
+	instructions := asm.Instructions{}
+	for i := 0; i < data.Len(); i += 4 {
+		instructions = append(instructions, asm.StoreImm(asm.R10, int16(i-data.Len()), int64(binary.LittleEndian.Uint32(data.Bytes()[i:i+4])), asm.Word))
+	}
+	instructions = append(instructions, asm.LoadMapPtr(asm.R1, m.FD()), asm.Mov.Reg(asm.R2, asm.R10), asm.Add.Imm(asm.R2, -int32(data.Len())), asm.FnMapDeleteElem.Call(), asm.Return())
+	program, err := ebpf.NewProgram(&ebpf.ProgramSpec{Name: "evict_flow", Type: ebpf.SocketFilter, License: "GPL", Instructions: instructions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer program.Close()
+	if result, _, err := program.Test(make([]byte, 64)); err != nil || result != 0 {
+		t.Fatalf("kernel flow eviction failed: %d, %v", result, err)
+	}
+}
 
 func (f *fixture) flowKey(c connection) flowKey {
 	f.t.Helper()

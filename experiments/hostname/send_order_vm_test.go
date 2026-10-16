@@ -130,9 +130,7 @@ func TestVMSendGuardSurvivesRecordEviction(t *testing.T) {
 	if err := f.probe.collection.Maps["send_snapshots"].Delete(c.cookie); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.probe.collection.Maps["send_flows"].Delete(f.flowKey(c)); err != nil {
-		t.Fatal(err)
-	}
+	deleteVMFlow(t, f.probe.collection.Maps["send_flows"], f.flowKey(c))
 	// Deletion models lost LRU records. A new sending object on the same live
 	// socket cannot turn an ambiguous lifetime back into a first attempt.
 	f.command("replace %d third.test", alias.slot)

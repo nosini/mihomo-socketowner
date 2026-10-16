@@ -54,6 +54,10 @@ func newFixtureMode(t *testing.T, network string, liveSend bool) *fixture {
 }
 
 func newFixtureObject(t *testing.T, network string, liveSend bool, override string) *fixture {
+	return newFixtureSetup(t, network, liveSend, override, true)
+}
+
+func newFixtureSetup(t *testing.T, network string, liveSend bool, override string, attachHere bool) *fixture {
 	t.Helper()
 	object, client := os.Getenv("HOSTNAME_VM_OBJECT"), os.Getenv("HOSTNAME_VM_CLIENT")
 	if liveSend {
@@ -134,12 +138,14 @@ func newFixtureObject(t *testing.T, network string, liveSend bool, override stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.probe, err = attachMode(object, cgroup, ssl, crypto, cmd.Process.Pid, liveSend)
-	if err != nil {
-		t.Fatal(err)
-	}
 	f.object, f.cgroup, f.sslPath, f.cryptoPath = object, cgroup, ssl, crypto
-	t.Cleanup(f.probe.close)
+	if attachHere {
+		f.probe, err = attachMode(object, cgroup, ssl, crypto, cmd.Process.Pid, liveSend)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(f.probe.close)
+	}
 	return f
 }
 

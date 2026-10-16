@@ -116,8 +116,9 @@ unsupported library profile or failed attachment never enables hostname routing.
 
 ## Next requirements
 
-Define independent observer authority and crash/reconnect behavior before a
-versioned optional service ABI or production routing consumer. Define explicit
+The [authority experiment](AUTHORITY.md) now tests private observer crash/reconnect
+and read-only access in separate processes. Define a trusted public bootstrap,
+cleanup ownership and versioned optional service ABI before production use. Define explicit
 application-name provenance and precedence alongside Fake-IP, explicit proxy
 names and sniffing. Broader send paths and reinjection remain outside the proved
 first-write path; browser/encrypted-DNS/ECH support remains a later milestone.

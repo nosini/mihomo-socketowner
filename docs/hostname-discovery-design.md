@@ -86,10 +86,17 @@ and stalled IPC for IPv4/IPv6 with process lookup on/off. A DOMAIN rule selects
 the expected outbound while preserving the original IP and port. The private
 supervised test bridge introduces no production reader or service ABI.
 
-Milestone 1 remains open for broader send coverage and reinjection. Independent
-observer authority/crash handling and production metadata/source precedence
-remain unimplemented. These diagnostic maps must not become a public routing
-interface without that work.
+The [authority follow-up](../experiments/hostname/AUTHORITY.md) separates the
+observer and a capability-free reader. Private link pins span descriptor teardown,
+frozen maps prevent userspace mutation, and a pidfd/irreversible authority gate
+rejects retained records after crash or revocation. Tests cover interrupted
+reads, live/dead reconnect and fresh-map restart without adopting old sockets.
+This remains a trusted inherited-FD bootstrap in the VM harness.
+
+Milestone 1 remains open for broader send coverage and reinjection. Authenticated
+public bootstrap, cleanup ownership, production metadata/source precedence and
+service confinement remain unimplemented. These diagnostic maps must not become
+a public routing interface without that work.
 
 ## Objective
 

@@ -163,6 +163,8 @@ The combined VM suite and local unit/vet checks pass. The send tests cover:
   replacement and checked in-process stop/restart; see [LIFETIME.md](LIFETIME.md).
 - Real Mihomo REDIRECT routing deadlines, bounded lookup/failure, fixed routes
   after late evidence, and destination preservation; see [ROUTING.md](ROUTING.md).
+- Independent observer crash/reconnect, private pinned attachments, frozen
+  maps and a separate unprivileged reader; see [AUTHORITY.md](AUTHORITY.md).
 
 The TLS peer stops after reading ClientHello. Completed TLS, ECH, real encrypted
 DNS, browser builds, Flatpak, TUN, TPROXY, explicit proxies, performance, minimal
@@ -176,9 +178,10 @@ capabilities and service confinement remain unverified.
    retries and corked/coalesced writes. Reinjection and other kernel send paths
    still need explicit scope and tests.
 2. **Independent observer operation.** Socket retirement, tuple reuse and
-   in-process link/map identity checks are tested. An external reader still
-   needs an explicit authority/reconnect contract, independent observer-crash
-   tests, least-privilege separation and a versioned optional ABI.
+   in-process link/map identity checks are tested. The private
+   [authority experiment](AUTHORITY.md) adds separate-process crash/reconnect
+   tests and frozen read-only maps. Public bootstrap authentication, cleanup
+   ownership, deployment confinement and a versioned optional ABI remain open.
 3. **Production routing metadata.** The supervised [REDIRECT test](ROUTING.md)
    now proves bounded lookup and destination preservation at the real Mihomo
    tunnel. Explicit provenance, source precedence, Fake-IP/sniffer interactions

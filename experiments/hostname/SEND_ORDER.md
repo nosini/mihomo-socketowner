@@ -93,7 +93,8 @@ the [fault object](PUBLICATION.md) for the complete publication suite.
 - Filling all 256 guard slots, including closed sockets, makes the next creation
   poison publication while TLS continues. Fault injection also exercises an
   actual `ENOENT` guard-insertion error.
-- Userspace cannot reset or delete a guard. Local reader tests reject missing
+- The original read-only FD cannot reset or delete a guard; the independent
+  [authority reader](AUTHORITY.md) also requires frozen shared maps. Local reader tests reject missing
   guards, incompatible/evicting maps, unexpected states and publication changes
   after the guard read, returning zero data on every failure.
 - Existing first-send correlation, abandoned setup, shared-socket objects whose

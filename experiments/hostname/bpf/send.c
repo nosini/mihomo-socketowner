@@ -330,6 +330,7 @@ struct flow_observation {
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 256);
+	__uint(map_flags, BPF_F_RDONLY);
 	__type(key, struct flow_key);
 	__type(value, struct flow_observation);
 } send_flows SEC(".maps");

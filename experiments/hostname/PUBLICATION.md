@@ -63,6 +63,11 @@ collection starts with fresh control and record maps. The
 links and map identities; restart leaves already-open sockets unknown. A reader
 must never combine one collection's control map with another's data maps.
 
+The [independent authority experiment](AUTHORITY.md) additionally freezes shared
+maps before issuing reader FDs. `BPF_F_RDONLY` restricts a descriptor, not a map
+reopened through another pin; freezing provides the global userspace write
+prohibition. BPF publication continues on frozen maps.
+
 Socket creation, sends and egress still return their normal allow result; an
 earlier LSM denial is preserved. Failure affects optional metadata availability,
 not application connectivity. Unsupported live-send paths still publish unknown

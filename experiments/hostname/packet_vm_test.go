@@ -254,9 +254,7 @@ func TestVMPacketRetransmission(t *testing.T) {
 			if n, err := c.server.Read(byte[:]); n != 0 || err == nil {
 				t.Fatalf("drop rule did not withhold payload: %d, %v", n, err)
 			}
-			if err := f.probe.collection.Maps["send_flows"].Delete(f.flowKey(c)); err != nil {
-				t.Fatal(err)
-			}
+			deleteVMFlow(t, f.probe.collection.Maps["send_flows"], f.flowKey(c))
 			runVM(t, "nft", "delete", "table", "inet", "hostname_payload_drop")
 			installed = false
 			deadline := time.Now().Add(3 * time.Second)

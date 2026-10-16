@@ -114,8 +114,10 @@ and callback configuration. Arbitrary privileged mutation followed by restoratio
 between checks is outside the contract; the owner must revoke before changing
 attachments. The session references and kernel queries remain private to this
 root-run harness, with no least-privilege reader/service boundary established.
-Independent observer crashes, reader reconnect/authority transfer and deployment
-must be designed before an external map consumer is introduced.
+The [authority experiment](AUTHORITY.md) now tests private link pins, frozen
+maps and a pidfd-bound unprivileged reader through independent observer crash,
+reconnect and fresh-instance restart. A public authenticated bootstrap and
+deployment contract remain unimplemented.
 
 The first-write/4 KiB restriction, fixed 256 lifetime guards and lack of guard
 reclamation remain. Reinjection, other interception/send paths, broader runtime
