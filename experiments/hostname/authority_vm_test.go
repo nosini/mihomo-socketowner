@@ -29,6 +29,7 @@ type authorityVMConfig struct {
 	PID                                    int
 	Manifest                               authorityManifest
 	Unpinned                               bool // deliberately unsafe pidfd-only counterexample
+	Runtime, Endpoint, Pause, Attack       string
 }
 
 type authorityVMRequest struct {
@@ -37,12 +38,13 @@ type authorityVMRequest struct {
 }
 
 type authorityVMReply struct {
-	Manifest    authorityManifest
-	Name, Error string
-	Cookie      uint64
-	Unknown     bool
-	Copied      bool
-	State       uint64
+	Manifest                   authorityManifest
+	Name, Error                string
+	Cookie                     uint64
+	Unknown                    bool
+	Copied                     bool
+	State                      uint64
+	Directory, Endpoint, Phase string
 }
 
 type authorityVMProcess struct {
@@ -78,7 +80,7 @@ func startAuthorityVMProcess(t *testing.T, role string, files []*os.File) *autho
 	h.cmd.Env = append(os.Environ(), "HOSTNAME_VM_AUTHORITY_ROLE="+role)
 	h.cmd.ExtraFiles = append([]*os.File{child}, files...)
 	h.cmd.Stdout, h.cmd.Stderr = &h.log, &h.log
-	if role == "reader" {
+	if role == "reader" || role == "bootstrap-attacker" {
 		h.cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 1000, Gid: 1000}}
 	}
 	err = h.cmd.Start()
@@ -134,12 +136,34 @@ func TestVMHostnameAuthorityHelper(t *testing.T) {
 		runAuthorityVMObserver(t, config, dec, enc)
 	} else if role == "reader" {
 		runAuthorityVMReader(t, config, dec, enc)
+	} else if role == "bootstrap-attacker" {
+		runBootstrapVMAttacker(t, config, enc)
+	} else if role == "bootstrap-fake" {
+		runBootstrapVMFake(t, config, enc)
 	} else {
 		t.Fatal("invalid helper role")
 	}
 }
 
 func runAuthorityVMObserver(t *testing.T, config authorityVMConfig, dec *json.Decoder, enc *json.Encoder) {
+	var owner *bootstrapOwner
+	var ownedReader *authorityReader
+	if config.Runtime != "" {
+		var err error
+		owner, err = newBootstrapOwner(config.Runtime, config.Directory, time.Now().Add(time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer owner.lock.Close()
+		config.Directory, err = owner.begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.Pause == "intent" {
+			pauseBootstrapVM(t, enc, dec, "intent", config.Directory)
+			return
+		}
+	}
 	p, err := attachMode(config.Object, config.Cgroup, config.SSL, config.Crypto, config.PID, true)
 	if err != nil {
 		t.Fatal(err)
@@ -186,12 +210,41 @@ func runAuthorityVMObserver(t *testing.T, config authorityVMConfig, dec *json.De
 			if err := l.get().Pin(filepath.Join(config.Directory, "link_"+l.name)); err != nil {
 				t.Fatal(err)
 			}
+			if owner != nil && config.Pause == "partial" {
+				pauseBootstrapVM(t, enc, dec, "partial", config.Directory)
+				return
+			}
 		}
 		if state := setAuthorityVM(t, gate, true); state != 1 {
 			t.Fatalf("failed to activate fresh authority: %d", state)
 		}
 	}
-	if err := enc.Encode(authorityVMReply{Manifest: manifest}); err != nil {
+	reply := authorityVMReply{Manifest: manifest, Directory: config.Directory}
+	if owner != nil {
+		var maps [4]*ebpf.Map
+		for i, name := range authorityMapNames {
+			maps[i], err = ebpf.LoadPinnedMap(filepath.Join(config.Directory, name), &ebpf.LoadPinOptions{ReadOnly: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer maps[i].Close()
+		}
+		pidfd, err := unix.PidfdOpen(os.Getpid(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unix.Close(pidfd)
+		ownedReader, err = newAuthorityReader(manifest, maps, pidfd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ownedReader.close()
+		if err := owner.publish(p, ownedReader, 1000, 1000); err != nil {
+			t.Fatal(err)
+		}
+		reply.Endpoint = owner.socketPath()
+	}
+	if err := enc.Encode(reply); err != nil {
 		t.Fatal(err)
 	}
 	for {
@@ -201,6 +254,20 @@ func runAuthorityVMObserver(t *testing.T, config authorityVMConfig, dec *json.De
 		}
 		reply := authorityVMReply{}
 		switch request.Command {
+		case "stop":
+			if owner == nil {
+				t.Fatal("no cleanup owner")
+			}
+			if err := owner.finish(p, ownedReader); err != nil {
+				t.Fatal(err)
+			}
+		case "drop-lock":
+			if owner == nil {
+				t.Fatal("no cleanup owner")
+			}
+			if err := owner.lock.Close(); err != nil {
+				t.Fatal(err)
+			}
 		case "drop-fds":
 			// Deterministically model descriptor teardown before pidfd readiness.
 			p.close()
@@ -239,43 +306,11 @@ func runAuthorityVMObserver(t *testing.T, config authorityVMConfig, dec *json.De
 // Repinning a read-only map FD cannot create userspace write access to the gate.
 func setAuthorityVM(t *testing.T, gate *ebpf.Map, activate bool) uint64 {
 	t.Helper()
-	instructions := asm.Instructions{
-		asm.StoreImm(asm.R10, -4, 0, asm.Word),
-		asm.LoadMapPtr(asm.R1, gate.FD()),
-		asm.Mov.Reg(asm.R2, asm.R10),
-		asm.Add.Imm(asm.R2, -4),
-		asm.FnMapLookupElem.Call(),
-		asm.JEq.Imm(asm.R0, 0, "done"),
-	}
-	if activate {
-		atomic := asm.CmpXchg.Mem(asm.R2, asm.R1, asm.DWord, 0)
-		// ebpf v0.22.0 Marshal snapshots Constant before translating an
-		// extended atomic opcode. Supply its wire immediate explicitly;
-		// otherwise this becomes ADD rather than CMPXCHG.
-		atomic.Constant = int64(asm.CmpXchg >> 8)
-		instructions = append(instructions, asm.Mov.Reg(asm.R2, asm.R0), asm.Mov.Imm(asm.R1, 1), asm.Mov.Imm(asm.R0, 0), atomic)
-	} else {
-		atomic := asm.OrAtomic.Mem(asm.R0, asm.R1, asm.DWord, 0)
-		atomic.Constant = int64(asm.OrAtomic >> 8)
-		instructions = append(instructions, asm.Mov.Imm(asm.R1, 2), atomic)
-	}
-	instructions = append(instructions,
-		asm.Mov.Imm(asm.R0, 0).WithSymbol("done"),
-		asm.Return(),
-	)
-	program, err := ebpf.NewProgram(&ebpf.ProgramSpec{Name: "set_authority", Type: ebpf.SocketFilter, License: "GPL", Instructions: instructions})
+	value, err := changeAuthority(gate, activate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer program.Close()
-	if _, _, err := program.Test(make([]byte, 64)); err != nil {
-		t.Fatal(err)
-	}
-	var got uint64
-	if err := gate.Lookup(uint32(0), &got); err != nil {
-		t.Fatal(err)
-	}
-	return got
+	return value
 }
 
 func runAuthorityVMReader(t *testing.T, config authorityVMConfig, dec *json.Decoder, enc *json.Encoder) {
@@ -290,16 +325,38 @@ func runAuthorityVMReader(t *testing.T, config authorityVMConfig, dec *json.Deco
 		t.Fatal(err)
 	}
 	var maps [4]*ebpf.Map
-	for i := range maps {
-		maps[i], err = ebpf.NewMapFromFD(4 + i)
-		if err != nil {
-			t.Fatal(err)
+	var r *authorityReader
+	pidfd := 8
+	var fdCount int
+	if config.Endpoint != "" {
+		files, e := os.ReadDir("/proc/self/fd")
+		if e != nil {
+			t.Fatal(e)
 		}
-		defer maps[i].Close()
+		fdCount = len(files)
+		r, _, err = dialAuthority(config.Endpoint, time.Now().Add(time.Second))
+		if err == nil {
+			maps, pidfd = r.maps, r.pidfd
+		}
+	} else {
+		for i := range maps {
+			maps[i], err = ebpf.NewMapFromFD(4 + i)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer maps[i].Close()
+		}
+		defer unix.Close(8)
+		r, err = newAuthorityReader(config.Manifest, maps, 8)
 	}
-	defer unix.Close(8) // observer pidfd; never a link or program FD
-	r, err := newAuthorityReader(config.Manifest, maps, 8)
+
 	if err != nil {
+		if config.Endpoint != "" {
+			files, e := os.ReadDir("/proc/self/fd")
+			if e != nil || len(files) != fdCount {
+				t.Fatalf("bootstrap failure leaked FDs: %d -> %d (%v)", fdCount, len(files), e)
+			}
+		}
 		if err := enc.Encode(authorityVMReply{Unknown: true, Error: err.Error()}); err != nil {
 			t.Fatal(err)
 		}
@@ -329,7 +386,7 @@ func runAuthorityVMReader(t *testing.T, config authorityVMConfig, dec *json.Deco
 	if _, err := ebpf.LoadPinnedMap(filepath.Join(config.Directory, "authority"), nil); !errors.Is(err, unix.EACCES) {
 		t.Fatalf("reader reopened private pin for writing: %v", err)
 	}
-	if err := unix.PidfdSendSignal(8, unix.SIGSTOP, nil, 0); !errors.Is(err, unix.EPERM) {
+	if err := unix.PidfdSendSignal(pidfd, unix.SIGSTOP, nil, 0); !errors.Is(err, unix.EPERM) {
 		t.Fatalf("reader can signal privileged observer: %v", err)
 	}
 	program, err := ebpf.NewProgram(&ebpf.ProgramSpec{Type: ebpf.SocketFilter, License: "GPL", Instructions: asm.Instructions{asm.Mov.Imm(asm.R0, 0), asm.Return()}})

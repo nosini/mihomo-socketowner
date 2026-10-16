@@ -93,10 +93,16 @@ rejects retained records after crash or revocation. Tests cover interrupted
 reads, live/dead reconnect and fresh-map restart without adopting old sockets.
 This remains a trusted inherited-FD bootstrap in the VM harness.
 
-Milestone 1 remains open for broader send coverage and reinjection. Authenticated
-public bootstrap, cleanup ownership, production metadata/source precedence and
+The [bootstrap follow-up](../experiments/hostname/BOOTSTRAP.md) replaces inherited
+FDs with an authenticated, versioned experimental Unix socket exchange. The
+observer is the socket/cleanup owner; readers bind to its kernel peer pidfd.
+A root-private journal and stable lock support revocation before owned cleanup
+and recovery after partial setup or crash without trusting a reusable numeric PID.
+
+Milestone 1 remains open for broader send coverage and reinjection. Stable
+optional metadata/provenance, production source precedence/entry points and
 service confinement remain unimplemented. These diagnostic maps must not become
-a public routing interface without that work.
+a stable public routing interface without that work.
 
 ## Objective
 

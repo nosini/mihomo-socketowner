@@ -11,8 +11,42 @@ import (
 	"sync/atomic"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/asm"
 	"golang.org/x/sys/unix"
 )
+
+// Private privileged control, never transferred to the reader. Frozen maps
+// remain writable by this reviewed BPF program, but not by map syscalls.
+func changeAuthority(gate *ebpf.Map, activate bool) (uint64, error) {
+	instructions := asm.Instructions{
+		asm.StoreImm(asm.R10, -4, 0, asm.Word), asm.LoadMapPtr(asm.R1, gate.FD()),
+		asm.Mov.Reg(asm.R2, asm.R10), asm.Add.Imm(asm.R2, -4), asm.FnMapLookupElem.Call(),
+		asm.JEq.Imm(asm.R0, 0, "done"),
+	}
+	if activate {
+		atomic := asm.CmpXchg.Mem(asm.R2, asm.R1, asm.DWord, 0)
+		// v0.22.0 Marshal snapshots Constant before converting an extended
+		// atomic opcode. Explicit wire immediates avoid encoding atomic ADD.
+		atomic.Constant = int64(asm.CmpXchg >> 8)
+		instructions = append(instructions, asm.Mov.Reg(asm.R2, asm.R0), asm.Mov.Imm(asm.R1, 1), asm.Mov.Imm(asm.R0, 0), atomic)
+	} else {
+		atomic := asm.OrAtomic.Mem(asm.R0, asm.R1, asm.DWord, 0)
+		atomic.Constant = int64(asm.OrAtomic >> 8)
+		instructions = append(instructions, asm.Mov.Imm(asm.R1, 2), atomic)
+	}
+	instructions = append(instructions, asm.Mov.Imm(asm.R0, 0).WithSymbol("done"), asm.Return())
+	program, err := ebpf.NewProgram(&ebpf.ProgramSpec{Name: "set_authority", Type: ebpf.SocketFilter, License: "GPL", Instructions: instructions})
+	if err != nil {
+		return 0, err
+	}
+	defer program.Close()
+	if _, _, err := program.Test(make([]byte, 64)); err != nil {
+		return 0, err
+	}
+	var value uint64
+	err = gate.Lookup(uint32(0), &value)
+	return value, err
+}
 
 var authorityMapNames = [4]string{"authority", "publication_state", "send_guards", "send_flows"}
 

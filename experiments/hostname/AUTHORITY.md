@@ -4,7 +4,9 @@ This private VM experiment separates the privileged observer from an
 unprivileged map reader. It tests observer exit/crash, descriptor teardown,
 revocation and reconnect while deliberately retaining old positive records.
 It does not introduce a public hostname ABI, authenticated service endpoint,
-production reader, systemd unit or deployment policy.
+production reader, systemd unit or deployment policy. The subsequent
+[bootstrap experiment](BOOTSTRAP.md) replaces inherited credentials with a tested
+authenticated socket and journaled cleanup/recovery owner.
 
 ## Why process liveness alone is insufficient
 
@@ -162,8 +164,10 @@ Unannounced privileged mutation/restoration is outside this contract, as it was
 for the in-process experiment. A public bootstrap must authenticate its source;
 an untrusted manifest and arbitrary pidfd are not sufficient credentials.
 
-The inherited-FD bootstrap and control programs remain private to the VM harness.
-Versioned publication/connection identity, service discovery/authentication,
-operator enable/disable, privileged cleanup ownership, reader sandboxing and
-source precedence need design and tests before this becomes a routing interface.
+The [bootstrap follow-up](BOOTSTRAP.md) adds an experimental versioned Unix
+socket exchange, kernel peer credentials/pidfd and a cleanup journal with crash
+recovery. The original inherited-FD tests remain useful isolation tests.
+Stable publication/connection identity, production entry points, operator
+enable/disable, service confinement and source precedence still need integration
+before this becomes a routing interface.
 Guard reclamation, broader sends, reinjection and runtime coverage remain open.

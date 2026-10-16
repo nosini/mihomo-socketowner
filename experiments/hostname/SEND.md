@@ -165,6 +165,8 @@ The combined VM suite and local unit/vet checks pass. The send tests cover:
   after late evidence, and destination preservation; see [ROUTING.md](ROUTING.md).
 - Independent observer crash/reconnect, private pinned attachments, frozen
   maps and a separate unprivileged reader; see [AUTHORITY.md](AUTHORITY.md).
+- Authenticated map-FD bootstrap and journaled cleanup/recovery ownership;
+  see [BOOTSTRAP.md](BOOTSTRAP.md).
 
 The TLS peer stops after reading ClientHello. Completed TLS, ECH, real encrypted
 DNS, browser builds, Flatpak, TUN, TPROXY, explicit proxies, performance, minimal
@@ -180,8 +182,9 @@ capabilities and service confinement remain unverified.
 2. **Independent observer operation.** Socket retirement, tuple reuse and
    in-process link/map identity checks are tested. The private
    [authority experiment](AUTHORITY.md) adds separate-process crash/reconnect
-   tests and frozen read-only maps. Public bootstrap authentication, cleanup
-   ownership, deployment confinement and a versioned optional ABI remain open.
+   tests and frozen read-only maps. The [bootstrap follow-up](BOOTSTRAP.md) adds
+   authenticated FD transfer and journaled recovery. Stable optional metadata,
+   production entry points and deployment confinement remain open.
 3. **Production routing metadata.** The supervised [REDIRECT test](ROUTING.md)
    now proves bounded lookup and destination preservation at the real Mihomo
    tunnel. Explicit provenance, source precedence, Fake-IP/sniffer interactions

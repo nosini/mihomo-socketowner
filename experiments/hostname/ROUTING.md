@@ -116,9 +116,10 @@ unsupported library profile or failed attachment never enables hostname routing.
 
 ## Next requirements
 
-The [authority experiment](AUTHORITY.md) now tests private observer crash/reconnect
-and read-only access in separate processes. Define a trusted public bootstrap,
-cleanup ownership and versioned optional service ABI before production use. Define explicit
+The [authority experiment](AUTHORITY.md) tests private observer crash/reconnect
+and read-only access in separate processes. The [bootstrap follow-up](BOOTSTRAP.md)
+adds an authenticated experimental exchange and cleanup owner. Finalize the
+optional record/provenance contract and service integration before production use. Define explicit
 application-name provenance and precedence alongside Fake-IP, explicit proxy
 names and sniffing. Broader send paths and reinjection remain outside the proved
 first-write path; browser/encrypted-DNS/ECH support remains a later milestone.
