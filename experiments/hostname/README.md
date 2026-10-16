@@ -13,8 +13,10 @@ A second [live send-hook experiment](SEND.md) now addresses that specific
 counterexample without depending on handshake uprobes or descriptor-table
 traversal. It also tests full flow identity through IPv4/IPv6 REDIRECT source-port
 collisions. Its [publication guard](PUBLICATION.md) rejects stale records after
-map-update or socket-storage failure. Concurrent-send and observer-lifetime
-requirements remain open; both experiments still keep all records private.
+map-update or socket-storage failure. A [send-order guard](SEND_ORDER.md) rejects
+every socket after its second send attempt, following a reproduced corked-write
+counterexample. Packet-provenance and observer-lifetime requirements remain open;
+both experiments still keep all records private.
 
 ## Running
 

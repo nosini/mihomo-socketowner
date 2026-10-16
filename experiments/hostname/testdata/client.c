@@ -5,12 +5,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <linux/sockios.h>
+#include <netinet/tcp.h>
 #include <openssl/ssl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -91,6 +94,16 @@ static void *handshake(void *arg)
 	printf("handshake %d %d %d\n", i, ret, SSL_get_error(connections[i].ssl, ret));
 	return NULL;
 }
+struct parallel_send { int slot, error; pthread_barrier_t *barrier; };
+static void *parallel_handshake(void *arg)
+{
+	struct parallel_send *send = arg;
+	int ret = pthread_barrier_wait(send->barrier);
+	check(ret == 0 || ret == PTHREAD_BARRIER_SERIAL_THREAD, "barrier wait");
+	ret = SSL_connect(connections[send->slot].ssl);
+	send->error = SSL_get_error(connections[send->slot].ssl, ret);
+	return NULL;
+}
 // An application BIO callback may cancel a write before it reaches the
 // socket, leaving the raw socket BIO and descriptor relationship intact.
 static long reject_write(BIO *bio, int oper, const char *argp, size_t len,
@@ -143,6 +156,36 @@ int main(int argc, char **argv)
 		struct connection *c = &connections[i];
 		if (!strcmp(op, "handshake")) {
 			handshake(&i);
+		} else if (!strcmp(op, "cork-pair") || !strcmp(op, "parallel")) {
+			int j;
+			check(sscanf(line, "%*s %*d %d", &j) == 1 && j >= 0 && j < 128 && j != i && connections[j].used, "second slot");
+			int one = 1;
+			check(setsockopt(c->fd, IPPROTO_TCP, TCP_CORK, &one, sizeof(one)) == 0, "cork");
+			if (!strcmp(op, "parallel")) {
+				pthread_barrier_t barrier;
+				pthread_t threads[2];
+				check(pthread_barrier_init(&barrier, NULL, 2) == 0, "barrier init");
+				struct parallel_send sends[2] = {{i, 0, &barrier}, {j, 0, &barrier}};
+				for (int n = 0; n < 2; n++)
+					check(pthread_create(&threads[n], NULL, parallel_handshake, &sends[n]) == 0, "parallel create");
+				for (int n = 0; n < 2; n++) {
+					check(pthread_join(threads[n], NULL) == 0, "parallel join");
+					check(sends[n].error == SSL_ERROR_WANT_READ, "parallel handshake");
+				}
+				check(pthread_barrier_destroy(&barrier) == 0, "barrier destroy");
+			} else {
+				int ret = SSL_connect(c->ssl);
+				check(SSL_get_error(c->ssl, ret) == SSL_ERROR_WANT_READ, "first corked handshake");
+				ret = SSL_connect(connections[j].ssl);
+				check(SSL_get_error(connections[j].ssl, ret) == SSL_ERROR_WANT_READ, "second corked handshake");
+			}
+			int queued = 0;
+			check(ioctl(c->fd, SIOCOUTQNSD, &queued) == 0 && queued > 0, "unsent corked bytes");
+			printf("corked %d\n", queued);
+		} else if (!strcmp(op, "uncork")) {
+			int zero = 0;
+			check(setsockopt(c->fd, IPPROTO_TCP, TCP_CORK, &zero, sizeof(zero)) == 0, "uncork");
+			puts("ok");
 		} else if (!strcmp(op, "thread")) {
 			pthread_t t;
 			check(pthread_create(&t, NULL, handshake, &i) == 0, "pthread_create");

@@ -65,7 +65,7 @@ func (p *probe) publicationWord() (uint64, error) {
 	return word, err
 }
 
-func lookupPublished[T any](p *probe, name string, key interface{}) (T, error) {
+func lookupPublished[T sendRecord](p *probe, name string, key interface{}) (T, error) {
 	lookup := func(value *T) error { return p.collection.Maps[name].Lookup(key, value) }
 	if p.publication == nil {
 		// The intentionally unsafe baseline retains its original behavior.
@@ -73,5 +73,24 @@ func lookupPublished[T any](p *probe, name string, key interface{}) (T, error) {
 		err := lookup(&value)
 		return value, err
 	}
-	return readPublished(p.publicationWord, lookup)
+	return readSendPublished(p.publicationWord, lookup, func(cookie uint64) (uint64, error) {
+		var state uint64
+		err := p.collection.Maps["send_guards"].Lookup(cookie, &state)
+		return state, err
+	})
+}
+
+// Guard lookup belongs inside the same publication interval as the record.
+// An old flow remains unusable after a second send even without new egress.
+func readSendPublished[T sendRecord](control func() (uint64, error), lookup func(*T) error, guard func(uint64) (uint64, error)) (T, error) {
+	return readPublished(control, func(value *T) error {
+		if err := lookup(value); err != nil {
+			return err
+		}
+		state, err := guard((*value).sendCookie())
+		if err != nil {
+			return err
+		}
+		return checkSendState(state, (*value).hasHostname())
+	})
 }

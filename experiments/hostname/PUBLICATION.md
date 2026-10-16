@@ -25,8 +25,9 @@ Socket creation, live-send observation and flow publication enter this protocol
 before reading or changing their metadata. Entry atomically increments generation
 and writer count together. Writers may overlap; this is a reader-validation
 protocol, not a lock. Exit decrements only the count. Any cookie-seeding update,
-scope-storage creation or record-map update failure atomically sets the failure
-bit before releasing its count. That bit survives every writer's exit.
+scope-storage creation, send-guard insertion or record-map update failure
+atomically sets the failure bit before releasing its count. That bit survives
+every writer's exit.
 
 Entry uses at most 16 compare-and-swap attempts. Exhausted retries or either
 counter reaching its limit permanently set failure rather than allowing an
@@ -36,7 +37,8 @@ heavy contention; performance and a suitable production scope are unmeasured.
 `readPublished` performs these steps for each individual record lookup:
 
 1. Read the control word; reject failure or any active writers.
-2. Read the requested record from the same observer collection.
+2. Read the requested record from the same observer collection. The live-send
+   reader also checks its [per-socket send guard](SEND_ORDER.md) in this interval.
 3. Read the control word again; accept only if it exactly matches the first.
 
 Every error returns a zero record. A complete writer between the reads changes
@@ -77,7 +79,7 @@ The opt-in fault object exercises actual kernel error paths:
 - `BPF_NOEXIST` replacement of an existing snapshot or flow fails with `EEXIST`.
   IPv4/IPv6 tests confirm an old positive name remains in the raw map while
   guarded snapshot and flow lookups both return failure and zero records.
-- `BPF_EXIST` insertion of a missing snapshot or flow fails with `ENOENT`.
+- `BPF_EXIST` insertion of a missing snapshot, flow or send guard fails with `ENOENT`.
   Both older and newly opened sockets become unknown to the guarded reader.
 - Invalid socket-storage creation flags return NULL and poison publication,
   including when no scope marker could be installed on the new socket.
@@ -113,7 +115,8 @@ substitute for the ordinary observer outside these tests.
 
 The control generation detects publication changes during a lookup. It does not
 identify socket, flow or observer lifetimes, serialize sends, or establish which
-send produced a packet. Same-socket concurrent writes, corking, deferred output,
-retransmission, reinjection, tuple reuse, detached observation and Mihomo's route
-commitment still need proofs. A stable successful read alone is not routing-safe
-hostname evidence.
+send produced a packet. The [send-order guard](SEND_ORDER.md) separately excludes
+multiple attempts on a socket, including concurrent and corked writes. First-send
+packet provenance, retransmission, reinjection, tuple reuse, detached observation
+and Mihomo's route commitment still need proofs. A stable successful read alone
+is not routing-safe hostname evidence.

@@ -54,7 +54,15 @@ or permanently after any failed publication or scope-storage creation. VM fault
 tests retain old positive records through real kernel update errors and verify
 that the reader returns unknown while networking continues.
 
-Milestone 1 remains open: overlapping sends/deferred packet output on one socket,
+The [send-order follow-up](../experiments/hostname/SEND_ORDER.md) reproduces
+another counterexample: sequential corked writes produce a flow tagged with the
+second hostname while the peer's first ClientHello contains the first. A
+monotonic, non-evicting per-socket guard now permanently excludes every socket
+after a second send attempt, including parallel writes and same-name retries.
+Readers check it independently of retained old flow records. This deliberately
+restricts coverage rather than claiming general concurrent-send attribution.
+
+Milestone 1 remains open: first-send packet provenance, broader send coverage,
 flow/observer generations and Mihomo's actual routing deadline still need proof.
 These diagnostic maps must not become a routing interface without that work.
 

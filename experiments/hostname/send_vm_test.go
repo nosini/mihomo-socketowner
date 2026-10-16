@@ -114,16 +114,18 @@ func TestVMSendUnknownPathInvalidates(t *testing.T) {
 				t.Fatalf("initial name %q: %v", name, err)
 			}
 			f.command("%s %d", op, c.slot)
-			o, err := stableLookup[observation](f, "send_snapshots", c.cookie)
+			// Inspect diagnostic invalidation independently of the stricter
+			// reader, which now rejects every second send on this socket.
+			o, err := readPublished(f.probe.publicationWord, func(out *observation) error {
+				return f.probe.collection.Maps["send_snapshots"].Lookup(c.cookie, out)
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if o.Cookie != c.cookie || o.Len != 0 || o.Pad != 1 {
 				t.Fatalf("unsupported send retained valid evidence: %+v", o)
 			}
-			if o := f.flow(c); o.Observation.Len != 0 {
-				t.Fatal("unsupported send retained old flow evidence")
-			}
+			f.assertSendAmbiguous(c)
 			if op == "raw-child" && o.TGID == f.pid {
 				t.Fatal("test did not transfer sending to a different process")
 			}

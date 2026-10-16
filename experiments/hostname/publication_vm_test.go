@@ -125,7 +125,7 @@ func TestVMPublicationFailedInsertion(t *testing.T) {
 	for _, target := range []struct {
 		name string
 		mask uint64
-	}{{"snapshot", 8}, {"flow", 16}, {"scope", 4}} {
+	}{{"snapshot", 8}, {"flow", 16}, {"scope", 4}, {"send-guard", 32}} {
 		t.Run(target.name, func(t *testing.T) {
 			f := newPublicationFixture(t, "tcp4")
 			old := f.open("older.test", "fd-first", "fd")

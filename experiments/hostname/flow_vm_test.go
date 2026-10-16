@@ -15,17 +15,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type flowKey struct {
-	Netns                       uint64
-	Source, Destination         [16]byte
-	SourcePort, DestinationPort uint16
-	Pad                         uint32
-}
-type flowObservation struct {
-	Cookie      uint64
-	Observation observation
-}
-
 func (f *fixture) flowKey(c connection) flowKey {
 	f.t.Helper()
 	peer := c.server.RemoteAddr().(*net.TCPAddr).AddrPort()

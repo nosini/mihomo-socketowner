@@ -12,10 +12,11 @@ for the replacement's first ClientHello. The original unsafe experiment and test
 remain available as a comparison.
 
 This is still a diagnostic prototype. A [publication guard](PUBLICATION.md) now
-rejects records after failed map writes or scope-storage creation. Concurrent
-operations and observer replacement still need correctness proofs before a
-routing reader can use these records. No Mihomo routing or service integration
-is enabled.
+rejects records after failed map writes or scope-storage creation. A separate
+[send-order guard](SEND_ORDER.md) now excludes every socket after its second
+send attempt, addressing a reproduced corked-write counterexample. Packet
+provenance and observer replacement still need proof before routing use.
+No Mihomo routing or service integration is enabled.
 
 ## Running
 
@@ -111,7 +112,8 @@ test reader. There is no public ABI or promise to preserve these values.
 
 The cgroup egress program separately publishes a private mapping from network
 namespace cookie and the packet's full source/destination endpoints to the
-application socket cookie and current send observation. It reads both ports
+application socket cookie and its sole send observation, when eligible under
+the send-order guard. It reads both ports
 from the packet after redirection, including a translated source port. The
 proxy's accepted socket has a different cookie; it is never compared for equality
 with the application cookie.
@@ -147,6 +149,9 @@ The combined VM suite and local unit/vet checks pass. The send tests cover:
 - Guarded publication, failed insertions/invalidation, scope-storage failure,
   active writers and counter exhaustion; see [PUBLICATION.md](PUBLICATION.md)
   for the protocol, fault-build command and limits.
+- Corked and parallel same-socket writes, permanent exclusion after a second
+  attempt, retained old flow records, record eviction and guard-map exhaustion;
+  see [SEND_ORDER.md](SEND_ORDER.md).
 
 The TLS peer stops after reading ClientHello. Completed TLS, ECH, real encrypted
 DNS, browser builds, Flatpak, TUN, TPROXY, explicit proxies, performance, minimal
@@ -154,12 +159,11 @@ capabilities and service confinement remain unverified.
 
 ## Remaining correctness work
 
-1. **Concurrent operations on one socket.** These tests interleave separate live
-   connections and keep multiple TLS objects alive, but do not prove ordering
-   when multiple sends on one socket overlap. The LSM runs before TCP serializes
-   writes. Reading the latest per-socket name at packet egress is insufficient
-   without a proven association to the operation that produced that packet.
-   Corking, deferred output, retransmission and reinjection need explicit scope.
+1. **Packet provenance and broader send coverage.** Multiple send attempts on one
+   socket are now permanently excluded. Supporting them needs an actual
+   operation-to-byte relationship, including corked/coalesced writes. The first
+   attempt still needs payload/sequence validation and a defined scope for
+   deferred output, retransmission, reinjection and other kernel send paths.
 2. **Flow and observer generations.** Prove tuple reuse, removal/replacement of
    observer links/maps, and unknown-flow publication under failure. Already-open
    descriptors must not keep old metadata usable after observation stops.

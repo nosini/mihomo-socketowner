@@ -199,7 +199,7 @@ func (f *fixture) lookup(c connection) observation {
 
 // A test may wait briefly for unrelated ACK publication to finish. The reader
 // itself never retries or accepts a busy/changed control word.
-func stableLookup[T any](f *fixture, name string, key interface{}) (T, error) {
+func stableLookup[T sendRecord](f *fixture, name string, key interface{}) (T, error) {
 	deadline := time.Now().Add(100 * time.Millisecond)
 	for {
 		value, err := lookupPublished[T](f.probe, name, key)

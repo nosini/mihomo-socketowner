@@ -114,8 +114,11 @@ TLS object from a verified call chain at the kernel's send hook. It addresses
 that counterexample and tests full flow mapping through IPv4/IPv6 REDIRECT port
 collisions. Its [publication guard](../experiments/hostname/PUBLICATION.md) rejects
 records after map-update or socket-storage failure, including retained stale
-values. Overlapping sends on one socket, flow/observer generations and the routing
-deadline still require work before routing integration.
+values. Its [send-order guard](../experiments/hostname/SEND_ORDER.md) excludes
+sockets permanently after a second send attempt, including parallel/corked writes
+that could otherwise mislabel earlier bytes. First-send packet provenance,
+flow/observer generations and the routing deadline still require work before
+routing integration.
 
 ## Independent distribution
 

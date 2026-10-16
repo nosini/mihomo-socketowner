@@ -29,6 +29,18 @@ struct {
 	__type(value, struct observation);
 } send_snapshots SEC(".maps");
 
+// Monotonic, non-evicting state: 0 = no attempt, 1 = exactly one attempt,
+// 3 = permanently ambiguous. A second send is excluded even if sequential or
+// identically named: TCP may still hold bytes from the first. Never delete or
+// reinitialize these entries while this observer collection is in use.
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 256);
+	__uint(map_flags, BPF_F_RDONLY);
+	__type(key, __u64);
+	__type(value, __u64);
+} send_guards SEC(".maps");
+
 SEC("cgroup/sock_create")
 int seed_send(struct bpf_sock *sk)
 {
@@ -39,8 +51,14 @@ int seed_send(struct bpf_sock *sk)
 		if (!publication)
 			return 1;
 		__u64 cookie = bpf_get_socket_cookie(sk);
+		__u64 initial = 0;
 		__u32 zero = 0;
-		if (!cookie || bpf_map_update_elem(&last_seeded, &zero, &cookie, BPF_ANY) ||
+		long seeded = bpf_map_update_elem(&last_seeded, &zero, &cookie, BPF_ANY);
+		long error = bpf_map_update_elem(&send_guards, &cookie, &initial,
+			(fault_mask() & FAULT_GUARD_INSERT) ? BPF_EXIST : BPF_NOEXIST);
+		if (error)
+			save_publication_error(error);
+		if (!cookie || seeded || error ||
 		    !bpf_sk_storage_get(&send_scope, sk, &pid,
 			BPF_SK_STORAGE_GET_F_CREATE | ((fault_mask() & FAULT_SCOPE) ? 2 : 0)))
 			publication_fail(publication);
@@ -136,6 +154,17 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	if (!publication)
 		return 0;
 	o.cookie = bpf_get_socket_cookie(sk);
+	__u64 *guard = bpf_map_lookup_elem(&send_guards, &o.cookie);
+	if (!guard) {
+		publication_fail(publication);
+		publication_end(publication);
+		return 0;
+	}
+	// Count the attempt before inspecting userspace, including unsupported and
+	// failed writes. CAS chooses at most one first attempt; OR never restores
+	// eligibility when another writer finishes out of order.
+	if (__sync_val_compare_and_swap(guard, 0, 1) != 0)
+		__sync_fetch_and_or(guard, 3);
 	o.boot_ns = bpf_ktime_get_boot_ns();
 	o.tgid = bpf_get_current_pid_tgid() >> 32;
 	o.fd = -1;
@@ -255,8 +284,13 @@ int observe_flow(struct __sk_buff *skb)
 	key.destination_port = bpf_ntohs(ports[1]);
 	key.netns = bpf_get_netns_cookie(skb);
 	record.cookie = bpf_get_socket_cookie(skb);
+	__u64 *guard = bpf_map_lookup_elem(&send_guards, &record.cookie);
+	if (!guard) {
+		publication_fail(publication);
+		goto done;
+	}
 	name = bpf_map_lookup_elem(&send_snapshots, &record.cookie);
-	if (name)
+	if (name && *(volatile __u64 *)guard == 1)
 		__builtin_memcpy(&record.observation, name, sizeof(*name));
 	// The SYN also publishes, with unknown hostname. Never wait until a name
 	// exists to replace a previous cookie at a reused flow key.

@@ -118,6 +118,9 @@ func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bo
 		if err := validatePublicationMap(spec.Maps["publication_state"]); err != nil {
 			return nil, err
 		}
+		if err := validateSendGuardMap(spec.Maps["send_guards"]); err != nil {
+			return nil, err
+		}
 		const libcPath = "/usr/lib64/libc.so.6"
 		if err := checkBinary(libcPath, libcSHA256); err != nil {
 			return nil, err
