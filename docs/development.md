@@ -116,9 +116,11 @@ collisions. Its [publication guard](../experiments/hostname/PUBLICATION.md) reje
 records after map-update or socket-storage failure, including retained stale
 values. Its [send-order guard](../experiments/hostname/SEND_ORDER.md) excludes
 sockets permanently after a second send attempt, including parallel/corked writes
-that could otherwise mislabel earlier bytes. First-send packet provenance,
-flow/observer generations and the routing deadline still require work before
-routing integration.
+that could otherwise mislabel earlier bytes. Its bounded
+[packet comparison](../experiments/hostname/PACKET.md) now matches emitted payloads
+to captured first-write bytes and sequence positions, including deferred and
+retransmitted data. Flow/observer generations and the routing deadline still
+require work before routing integration.
 
 ## Independent distribution
 

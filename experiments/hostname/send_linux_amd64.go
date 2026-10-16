@@ -16,8 +16,10 @@ type flowKey struct {
 }
 
 type flowObservation struct {
-	Cookie      uint64
-	Observation observation
+	Cookie               uint64
+	Observation          observation
+	Sequence, PayloadLen uint32
+	PacketNS             uint64
 }
 
 type sendRecord interface {
@@ -32,7 +34,7 @@ func (o flowObservation) hasHostname() bool  { return o.Observation.Len != 0 }
 
 var (
 	errSendUnobserved = errors.New("hostname has no observed send attempt")
-	errSendAmbiguous  = errors.New("hostname excluded after multiple send attempts")
+	errSendAmbiguous  = errors.New("hostname excluded by the socket send guard")
 )
 
 func validateSendGuardMap(m *ebpf.MapSpec) error {

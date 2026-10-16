@@ -156,6 +156,20 @@ int main(int argc, char **argv)
 		struct connection *c = &connections[i];
 		if (!strcmp(op, "handshake")) {
 			handshake(&i);
+		} else if (!strcmp(op, "cork-one") || !strcmp(op, "ack")) {
+			int one = 1;
+			if (!strcmp(op, "cork-one")) {
+				check(setsockopt(c->fd, IPPROTO_TCP, TCP_CORK, &one, sizeof(one)) == 0, "cork");
+				int ret = SSL_connect(c->ssl);
+				check(SSL_get_error(c->ssl, ret) == SSL_ERROR_WANT_READ, "corked handshake");
+			} else {
+				char byte;
+				check(read(c->fd, &byte, 1) == 1 && byte == 'P', "read probe");
+				check(setsockopt(c->fd, IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one)) == 0, "quick ack");
+			}
+			int queued = 0;
+			check(ioctl(c->fd, SIOCOUTQNSD, &queued) == 0 && queued > 0, "unsent corked bytes");
+			printf("corked %d\n", queued);
 		} else if (!strcmp(op, "cork-pair") || !strcmp(op, "parallel")) {
 			int j;
 			check(sscanf(line, "%*s %*d %d", &j) == 1 && j >= 0 && j < 128 && j != i && connections[j].used, "second slot");
@@ -194,6 +208,14 @@ int main(int argc, char **argv)
 			size_t written = 0;
 			int ret = SSL_write_ex(c->ssl, "x", 1, &written);
 			printf("implicit %d %d %d\n", i, ret, SSL_get_error(c->ssl, ret));
+		} else if (!strcmp(op, "large-alpn")) {
+			unsigned char protocols[4096];
+			for (int n = 0; n < 16; n++) {
+				protocols[n * 256] = 255;
+				memset(&protocols[n * 256 + 1], 'a' + n, 255);
+			}
+			check(SSL_set_alpn_protos(c->ssl, protocols, sizeof(protocols)) == 0, "large ALPN");
+			puts("ok");
 		} else if (!strcmp(op, "alias")) {
 			check(sscanf(line, "%*s %*d %511s", name) == 1, "alias");
 			int j;

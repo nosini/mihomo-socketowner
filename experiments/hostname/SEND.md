@@ -14,9 +14,10 @@ remain available as a comparison.
 This is still a diagnostic prototype. A [publication guard](PUBLICATION.md) now
 rejects records after failed map writes or scope-storage creation. A separate
 [send-order guard](SEND_ORDER.md) now excludes every socket after its second
-send attempt, addressing a reproduced corked-write counterexample. Packet
-provenance and observer replacement still need proof before routing use.
-No Mihomo routing or service integration is enabled.
+send attempt, addressing a reproduced corked-write counterexample. A bounded
+[packet comparison](PACKET.md) now ties eligible payloads to captured write bytes
+and TCP sequence positions. Flow/observer lifetime still needs proof before
+routing use. No Mihomo routing or service integration is enabled.
 
 ## Running
 
@@ -105,7 +106,8 @@ needed for these associations.
 
 `observation.Pad` is private diagnostic status: 0 means a captured name, 1 means
 unsupported process/syscall/frame chain, 2 means invalid TLS/BIO relationship,
-and 4 means no usable string. Normal hostname syntax validation remains in the
+4 means no usable string, and 6 means unusable first-write capture. Syntax
+validation remains in the
 test reader. There is no public ABI or promise to preserve these values.
 
 ## Mapping to an intercepted flow
@@ -113,7 +115,7 @@ test reader. There is no public ABI or promise to preserve these values.
 The cgroup egress program separately publishes a private mapping from network
 namespace cookie and the packet's full source/destination endpoints to the
 application socket cookie and its sole send observation, when eligible under
-the send-order guard. It reads both ports
+the send-order guard and exact byte/sequence comparison. It reads both ports
 from the packet after redirection, including a translated source port. The
 proxy's accepted socket has a different cookie; it is never compared for equality
 with the application cookie.
@@ -152,6 +154,9 @@ The combined VM suite and local unit/vet checks pass. The send tests cover:
 - Corked and parallel same-socket writes, permanent exclusion after a second
   attempt, retained old flow records, record eviction and guard-map exhaustion;
   see [SEND_ORDER.md](SEND_ORDER.md).
+- First-write payload comparison, unknown ACKs during corking, automatic TCP
+  retransmission, modified bytes and oversized ClientHellos; see [PACKET.md](PACKET.md)
+  for the 4 KiB limit and synthetic parser/window tests.
 
 The TLS peer stops after reading ClientHello. Completed TLS, ECH, real encrypted
 DNS, browser builds, Flatpak, TUN, TPROXY, explicit proxies, performance, minimal
@@ -159,11 +164,11 @@ capabilities and service confinement remain unverified.
 
 ## Remaining correctness work
 
-1. **Packet provenance and broader send coverage.** Multiple send attempts on one
-   socket are now permanently excluded. Supporting them needs an actual
-   operation-to-byte relationship, including corked/coalesced writes. The first
-   attempt still needs payload/sequence validation and a defined scope for
-   deferred output, retransmission, reinjection and other kernel send paths.
+1. **Broader send coverage.** The first bounded write now has an exact emitted
+   byte/sequence comparison, including tested deferred output and retransmission.
+   Multiple attempts remain excluded. Supporting them needs attribution across
+   retries and corked/coalesced writes. Reinjection and other kernel send paths
+   still need explicit scope and tests.
 2. **Flow and observer generations.** Prove tuple reuse, removal/replacement of
    observer links/maps, and unknown-flow publication under failure. Already-open
    descriptors must not keep old metadata usable after observation stops.

@@ -4,6 +4,7 @@
 #include "snapshot.c"
 #include <bpf/bpf_endian.h>
 #include "publication.h"
+#include "packet.h"
 
 const volatile __u64 ssl_base;
 const volatile __u64 crypto_base;
@@ -12,14 +13,27 @@ const volatile __u64 libc_base;
 // A CO-RE flavor avoids colliding with the userspace pt_regs definition used
 // by the baseline uprobe. These are the kernel's member names.
 struct pt_regs___kernel {
-	unsigned long sp, ip, bp, bx, di, orig_ax;
+	unsigned long sp, ip, bp, bx, di, si, dx, orig_ax;
+} __attribute__((preserve_access_index));
+
+struct tcp_sock {
+	__u32 write_seq, snd_nxt, snd_una;
+} __attribute__((preserve_access_index));
+enum iter_type { ITER_UBUF };
+struct iov_iter {
+	__u8 iter_type, data_source;
+	unsigned long iov_offset, count;
+	void *ubuf;
+} __attribute__((preserve_access_index));
+struct msghdr {
+	struct iov_iter msg_iter;
 } __attribute__((preserve_access_index));
 
 struct {
 	__uint(type, BPF_MAP_TYPE_SK_STORAGE);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 	__type(key, int);
-	__type(value, __u32);
+	__type(value, struct send_evidence);
 } send_scope SEC(".maps");
 
 struct {
@@ -59,7 +73,7 @@ int seed_send(struct bpf_sock *sk)
 		if (error)
 			save_publication_error(error);
 		if (!cookie || seeded || error ||
-		    !bpf_sk_storage_get(&send_scope, sk, &pid,
+		    !bpf_sk_storage_get(&send_scope, sk, 0,
 			BPF_SK_STORAGE_GET_F_CREATE | ((fault_mask() & FAULT_SCOPE) ? 2 : 0)))
 			publication_fail(publication);
 		publication_end(publication);
@@ -131,13 +145,44 @@ static __always_inline __u64 sending_ssl(struct pt_regs___kernel *regs)
 	return ssl;
 }
 
-struct msghdr;
+static __always_inline int capture_send(struct send_evidence *evidence,
+	struct sock *sk, struct msghdr *msg, struct pt_regs___kernel *regs, int size)
+{
+	// Validate the kernel's real single-buffer iterator against the syscall,
+	// and exclude any older queued/unacknowledged bytes. Only the first LSM
+	// attempt can write this socket-local evidence; it is immutable afterward.
+	struct tcp_sock *tcp = (void *)sk;
+	__u32 sequence, next, unacked;
+	__u64 buffer = 0, count = 0;
+	if (size <= 0 || size > SEND_BYTES_MAX ||
+	    BPF_CORE_READ(sk, __sk_common.skc_state) != 1 ||
+	    BPF_CORE_READ(msg, msg_iter.iter_type) != bpf_core_enum_value(enum iter_type, ITER_UBUF) ||
+	    BPF_CORE_READ(msg, msg_iter.data_source) != 1 ||
+	    BPF_CORE_READ(msg, msg_iter.iov_offset) != 0 ||
+	    BPF_CORE_READ_INTO(&buffer, msg, msg_iter.ubuf) ||
+	    BPF_CORE_READ_INTO(&count, msg, msg_iter.count) ||
+	    buffer != BPF_CORE_READ(regs, si) || count != BPF_CORE_READ(regs, dx) || count != size ||
+	    BPF_CORE_READ_INTO(&sequence, tcp, write_seq) ||
+	    BPF_CORE_READ_INTO(&next, tcp, snd_nxt) ||
+	    BPF_CORE_READ_INTO(&unacked, tcp, snd_una) || sequence != next || sequence != unacked)
+		return 0;
+	if (bpf_probe_read_user(evidence->bytes, size, (void *)buffer))
+		return 0;
+	if (BPF_CORE_READ_INTO(&next, tcp, write_seq) || next != sequence ||
+	    BPF_CORE_READ_INTO(&next, tcp, snd_nxt) || next != sequence ||
+	    BPF_CORE_READ_INTO(&unacked, tcp, snd_una) || unacked != sequence)
+		return 0;
+	evidence->sequence = sequence;
+	evidence->len = size;
+	return 1;
+}
 
 SEC("lsm/socket_sendmsg")
 int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	     int ret)
 {
 	struct sock *sk;
+	struct send_evidence *evidence;
 	__u64 *publication;
 	struct observation o = {};
 	struct task_struct *task;
@@ -148,7 +193,7 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	if (ret)
 		return ret;
 	sk = socket->sk;
-	if (!sk || !bpf_sk_storage_get(&send_scope, sk, 0, 0))
+	if (!sk || !(evidence = bpf_sk_storage_get(&send_scope, sk, 0, 0)))
 		return 0;
 	publication = publication_begin();
 	if (!publication)
@@ -163,7 +208,8 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	// Count the attempt before inspecting userspace, including unsupported and
 	// failed writes. CAS chooses at most one first attempt; OR never restores
 	// eligibility when another writer finishes out of order.
-	if (__sync_val_compare_and_swap(guard, 0, 1) != 0)
+	int first = __sync_val_compare_and_swap(guard, 0, 1) == 0;
+	if (!first)
 		__sync_fetch_and_or(guard, 3);
 	o.boot_ns = bpf_ktime_get_boot_ns();
 	o.tgid = bpf_get_current_pid_tgid() >> 32;
@@ -190,6 +236,10 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	    READ_USER(fd, bio, BIO_NUM) || fd < 0 || fd != BPF_CORE_READ(regs, di))
 		goto publish;
 	o.fd = fd;
+	if (first && !capture_send(evidence, sk, msg, regs, size)) {
+		o.pad = 6;
+		goto publish;
+	}
 	// The verified write syscall used this BIO's descriptor. The kernel
 	// has already resolved that descriptor and holds THIS socket for the
 	// operation, even if another thread changes the descriptor slot later.
@@ -221,15 +271,11 @@ publish:
 
 // Private diagnostic bridge from the application's socket to the translated
 // flow seen by a transparent listener. This is not a public reader ABI.
-struct flow_key {
-	__u64 netns;
-	__u8 source[16], destination[16];
-	__u16 source_port, destination_port;
-	__u32 pad;
-};
 struct flow_observation {
 	__u64 cookie;
 	struct observation observation;
+	__u32 sequence, payload_len;
+	__u64 packet_ns;
 };
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -242,60 +288,41 @@ SEC("cgroup_skb/egress")
 int observe_flow(struct __sk_buff *skb)
 {
 	struct bpf_sock *sk = skb->sk;
+	struct send_evidence *evidence;
 	__u64 *publication;
-	struct flow_key key = {};
+	struct packet_info packet = {};
 	struct flow_observation record = {};
 	struct observation *name;
-	__u8 header[40];
-	__u16 ports[2];
-	__u32 offset;
 
 	if (!sk || !(sk = bpf_sk_fullsock(sk)) ||
-	    !bpf_sk_storage_get(&send_scope, sk, 0, 0))
+	    !(evidence = bpf_sk_storage_get(&send_scope, sk, 0, 0)))
 		return 1;
 	publication = publication_begin();
 	if (!publication)
 		return 1;
-	if (bpf_skb_load_bytes(skb, 0, header, 20))
-		goto done;
-	if ((header[0] >> 4) == 4) {
-		if (header[9] != IPPROTO_TCP || (header[6] & 0x3f) || header[7])
-			goto done;
-		offset = (header[0] & 15) * 4;
-		if (offset < 20)
-			goto done;
-		key.source[10] = key.destination[10] = 0xff;
-		key.source[11] = key.destination[11] = 0xff;
-		__builtin_memcpy(&key.source[12], &header[12], 4);
-		__builtin_memcpy(&key.destination[12], &header[16], 4);
-	} else if ((header[0] >> 4) == 6) {
-		// Extension-header paths are deliberately outside this experiment.
-		if (header[6] != IPPROTO_TCP || bpf_skb_load_bytes(skb, 0, header, 40))
-			goto done;
-		offset = 40;
-		__builtin_memcpy(key.source, &header[8], 16);
-		__builtin_memcpy(key.destination, &header[24], 16);
-	} else {
-		goto done;
-	}
-	if (bpf_skb_load_bytes(skb, offset, ports, sizeof(ports)))
-		goto done;
-	key.source_port = bpf_ntohs(ports[0]);
-	key.destination_port = bpf_ntohs(ports[1]);
-	key.netns = bpf_get_netns_cookie(skb);
 	record.cookie = bpf_get_socket_cookie(skb);
 	__u64 *guard = bpf_map_lookup_elem(&send_guards, &record.cookie);
 	if (!guard) {
 		publication_fail(publication);
 		goto done;
 	}
+	if (!parse_packet(skb, &packet)) {
+		__sync_fetch_and_or(guard, 3);
+		goto done;
+	}
+	packet.key.netns = bpf_get_netns_cookie(skb);
+	record.sequence = packet.sequence;
+	record.payload_len = packet.payload_len;
+	record.packet_ns = bpf_ktime_get_boot_ns();
 	name = bpf_map_lookup_elem(&send_snapshots, &record.cookie);
-	if (name && *(volatile __u64 *)guard == 1)
+	if (packet.payload_len && !packet_matches(skb, &packet, evidence))
+		__sync_fetch_and_or(guard, 3);
+	if (name && packet.payload_len && *(volatile __u64 *)guard == 1)
 		__builtin_memcpy(&record.observation, name, sizeof(*name));
 	// The SYN also publishes, with unknown hostname. Never wait until a name
 	// exists to replace a previous cookie at a reused flow key.
 	{
-		long error = bpf_map_update_elem(&send_flows, &key, &record,
+		long error = bpf_map_update_elem(&send_flows, &packet.key, &record,
 			(fault_mask() & FAULT_FLOW) ? BPF_NOEXIST :
 			(fault_mask() & FAULT_FLOW_INSERT) ? BPF_EXIST : BPF_ANY);
 		if (error) {

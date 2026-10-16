@@ -62,8 +62,15 @@ after a second send attempt, including parallel writes and same-name retries.
 Readers check it independently of retained old flow records. This deliberately
 restricts coverage rather than claiming general concurrent-send attribution.
 
-Milestone 1 remains open: first-send packet provenance, broader send coverage,
-flow/observer generations and Mihomo's actual routing deadline still need proof.
+The [packet follow-up](../experiments/hostname/PACKET.md) captures the kernel's
+verified first-write buffer and TCP sequence position, admitting at most 4 KiB.
+Only emitted payloads matching the captured byte window receive a hostname.
+Control packets stay unknown; mismatched or unsupported packets exclude the
+socket. IPv4/IPv6 tests cover ACKs while a ClientHello remains corked, automatic
+TCP retransmission, modified payloads and oversized writes without blocking TLS.
+
+Milestone 1 remains open: broader send coverage, reinjection, flow/observer
+generations and Mihomo's actual routing deadline still need proof.
 These diagnostic maps must not become a routing interface without that work.
 
 ## Objective

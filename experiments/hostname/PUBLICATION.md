@@ -116,7 +116,8 @@ substitute for the ordinary observer outside these tests.
 The control generation detects publication changes during a lookup. It does not
 identify socket, flow or observer lifetimes, serialize sends, or establish which
 send produced a packet. The [send-order guard](SEND_ORDER.md) separately excludes
-multiple attempts on a socket, including concurrent and corked writes. First-send
-packet provenance, retransmission, reinjection, tuple reuse, detached observation
-and Mihomo's route commitment still need proofs. A stable successful read alone
-is not routing-safe hostname evidence.
+multiple attempts on a socket, including concurrent and corked writes. The
+[packet comparison](PACKET.md) matches eligible first-write bytes and sequence
+positions. Reinjection, tuple reuse, detached observation and Mihomo's route
+commitment still need proofs. A stable successful read alone is not routing-safe
+hostname evidence.

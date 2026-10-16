@@ -43,7 +43,7 @@ the map has `BPF_F_RDONLY`. The loader validates its exact specification.
 | --- | --- | --- |
 | 0 | No LSM send attempt yet | Empty flow identity only; reject a positive name |
 | 1 | Exactly one attempt | Apply the remaining publication and hostname checks |
-| 3 | Multiple attempts | Reject the entire record and return zero |
+| 3 | Multiple attempts or excluded packet evidence | Reject the entire record and return zero |
 
 At LSM entry, before inspecting the userspace call chain, an atomic
 compare-and-swap changes zero to one. Any attempt that does not win this first
@@ -106,10 +106,11 @@ handshake/application writes. Ordinary application networking is unaffected;
 only optional diagnostic hostname availability is lost. Recovery requires a new
 socket lifetime in a healthy collection, not waiting or changing the TLS object.
 
-This guard does not prove packet provenance for every first attempt. The current
-egress hook can copy the single observation onto control packets as well as data;
-payload/sequence validation, deferred and retransmitted output, reinjection and
-other kernel send paths still need a defined scope and proof. Mutating one SSL
-object's fields concurrently remains unsupported. Flow tuple reuse, observer
+The [packet follow-up](PACKET.md) now compares bounded first-write bytes and TCP
+sequence positions, keeping control packets unknown and excluding mismatched
+payloads through this same guard. Deferred output and automatic retransmission
+are tested within that scope. Reinjection and other kernel send paths remain
+outside it. Mutating one SSL object's fields concurrently is unsupported.
+Flow tuple reuse, observer
 detachment/replacement, map lifetime and Mihomo's routing deadline also remain
 open. These maps are still diagnostic, with no routing integration or public ABI.

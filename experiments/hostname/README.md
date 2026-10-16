@@ -15,8 +15,9 @@ traversal. It also tests full flow identity through IPv4/IPv6 REDIRECT source-po
 collisions. Its [publication guard](PUBLICATION.md) rejects stale records after
 map-update or socket-storage failure. A [send-order guard](SEND_ORDER.md) rejects
 every socket after its second send attempt, following a reproduced corked-write
-counterexample. Packet-provenance and observer-lifetime requirements remain open;
-both experiments still keep all records private.
+counterexample. Its [packet comparison](PACKET.md) matches emitted payloads to
+captured first-write bytes and TCP sequence positions. Flow/observer lifetime
+requirements remain open; both experiments still keep all records private.
 
 ## Running
 
