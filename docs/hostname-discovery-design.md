@@ -115,8 +115,17 @@ and routing policy. Both IP families and process modes pass crash, revocation,
 second-send, eviction, expiry, reader-close and restart cases. The final guarded
 read is the commitment point; a subsequent crash leaves that route fixed.
 
+The [native lookup follow-up](../experiments/hostname/NATIVE.md) adds independent,
+disabled-by-default configuration and a bounded lookup in Mihomo's ordinary TCP
+REDIRECT tunnel. An explicit experimental backend build is required. Bootstrap,
+polling and confirmation share one deadline; resource capacity is bounded, and
+reload/disable cancel pending reads. Readers close before dialing. Thirty-two
+native cases pass alongside the earlier routing matrices, including delayed/late
+data, missing/stalled observers and post-match cancellation. Parsing a proposed
+configuration does not revoke active evidence.
+
 Milestone 1 remains open for broader send coverage and reinjection. Stable
-optional reader records, production entry
+optional reader records, resident observer entry
 points and service confinement remain unimplemented. These diagnostic maps must not become
 a stable public routing interface without that work.
 

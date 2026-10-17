@@ -171,6 +171,6 @@ The [bootstrap follow-up](BOOTSTRAP.md) adds an experimental versioned Unix
 socket exchange, kernel peer credentials/pidfd and a cleanup journal with crash
 recovery. The original inherited-FD tests remain useful isolation tests.
 Stable publication/connection identity, production entry points, operator
-enable/disable and service confinement still need integration
+an observer CLI and service confinement still need integration
 before this becomes a routing interface.
 Guard reclamation, broader sends, reinjection and runtime coverage remain open.

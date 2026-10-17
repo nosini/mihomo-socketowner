@@ -9,7 +9,9 @@ descriptor or pidfd is supplied to Mihomo by the supervisor.
 This connects the existing [authority](AUTHORITY.md) and [routing](ROUTING.md)
 experiments. The exported facade in `reader_linux_amd64.go` is experimental; it
 does not declare a stable public map ABI or install a reader or observer service.
-Ordinary Mihomo builds have no socketowner dependency or enabled lookup path.
+Ordinary Mihomo builds have no socketowner dependency or enabled backend.
+The [native lookup follow-up](NATIVE.md) adds independent configuration and a
+bounded tunnel hook behind an explicit experimental backend build tag.
 
 ## Candidate and final read
 
@@ -105,7 +107,8 @@ Neither test deploys a service or modifies existing owner pins.
 
 The map and bootstrap layouts still belong to the exact diagnostic profile.
 Production work needs a separately versioned optional reader contract, packaging,
-an independent enable/disable setting, an inbound lookup/wait entry point and
-service confinement/restart policy. The existing process owner map/loader and
+a resident observer entry point and service confinement/restart policy. The
+native follow-up supplies independent configuration and a bounded inbound lookup.
+The existing process owner map/loader and
 kill-switch are unchanged. Guard reclamation, broader sends and transport/runtime
 coverage remain separate work.

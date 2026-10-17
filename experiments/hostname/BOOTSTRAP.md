@@ -141,9 +141,10 @@ owner pins. Without the authority VM environment, privileged tests skip.
 ## Next integration work
 
 The implementation remains private to `experiments/hostname`. Production use
-still needs a stable optional reader record contract and production integration,
-a loader entry point, reader packaging,
-operator enable/disable behavior and tested service confinement/restart policy.
+still needs a stable optional reader record contract, reader packaging, a
+resident observer CLI and tested service confinement/restart policy. The native
+[lookup follow-up](NATIVE.md) provides independent configuration and bounded,
+cancelable bootstrap/lookup with routing-only descriptor lifetime.
 The exact-build, single-target, first-send/4 KiB and fixed-guard restrictions
 remain. Broader sends, reinjection, full TLS and browser encrypted-DNS/ECH support
 remain unverified.
@@ -152,4 +153,5 @@ The [Mihomo metadata follow-up](../../../mihomo/docs/application-hostname-metada
 defines internal rule-source precedence and destination preservation. It remains
 a supervised consumer. The [consumption follow-up](CONSUMPTION.md) connects this
 bootstrap directly to capability-free Mihomo with a fresh post-match check and
-fallback before dialing. It is not connected to production configuration.
+fallback before dialing. The native hook remains experimental and has no
+installed observer service.

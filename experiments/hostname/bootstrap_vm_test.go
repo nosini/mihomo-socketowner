@@ -4,8 +4,10 @@ package hostname
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -106,6 +108,15 @@ func runBootstrapVMFake(t *testing.T, config authorityVMConfig, enc *json.Encode
 	h, err := decodeBootstrap(data)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if config.Attack == "stall-context" {
+		if err := enc.Encode(authorityVMReply{Phase: "request"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+			t.Fatalf("canceled bootstrap did not close socket: %v", err)
+		}
+		return
 	}
 	h.Kind, h.Count, h.Instance = 2, 4, [16]byte{1}
 	h.Manifest.Maps = [4]ebpf.MapID{1, 2, 3, 4}
@@ -263,6 +274,41 @@ func TestVMBootstrapTransferAndStop(t *testing.T) {
 				t.Fatal("cleanup was not idempotent", err)
 			}
 		})
+	}
+}
+
+func TestVMBootstrapContextCancellation(t *testing.T) {
+	root, _ := bootstrapVMRoot(t)
+	endpoint := filepath.Join(root, "canceled.sock")
+	fake := startAuthorityVMProcess(t, "bootstrap-fake", nil)
+	fake.exchange(t, authorityVMConfig{Endpoint: endpoint, Attack: "stall-context"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		r, err := DialReaderContext(ctx, endpoint, time.Now().Add(5*time.Second))
+		if r != nil {
+			r.Close()
+		}
+		done <- err
+	}()
+	var phase authorityVMReply
+	fake.conn.SetReadDeadline(time.Now().Add(time.Second))
+	if err := fake.dec.Decode(&phase); err != nil || phase.Phase != "request" {
+		t.Fatalf("bootstrap did not reach reply wait: %+v, %v", phase, err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("canceled bootstrap granted a reader")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("bootstrap ignored cancellation")
+	}
+	<-fake.done
+	if fake.err != nil {
+		t.Fatal(fake.err)
 	}
 }
 

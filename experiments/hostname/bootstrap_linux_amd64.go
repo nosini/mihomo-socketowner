@@ -6,6 +6,7 @@ package hostname
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -221,12 +222,23 @@ func receiveAuthority(c *net.UnixConn, deadline time.Time) (_ *authorityReader, 
 }
 
 func dialAuthority(path string, deadline time.Time) (*authorityReader, [16]byte, error) {
+	return dialAuthorityContext(context.Background(), path, deadline)
+}
+
+func dialAuthorityContext(ctx context.Context, path string, deadline time.Time) (*authorityReader, [16]byte, error) {
 	if err := trustedBootstrapPath(path, true); err != nil {
 		return nil, [16]byte{}, err
 	}
-	c, err := (&net.Dialer{Deadline: deadline}).Dial("unixpacket", path)
+	c, err := (&net.Dialer{Deadline: deadline}).DialContext(ctx, "unixpacket", path)
 	if err != nil {
 		return nil, [16]byte{}, err
 	}
-	return receiveAuthority(c.(*net.UnixConn), deadline)
+	stop := context.AfterFunc(ctx, func() { c.Close() })
+	defer stop()
+	r, instance, err := receiveAuthority(c.(*net.UnixConn), deadline)
+	if err == nil && ctx.Err() != nil {
+		r.close()
+		return nil, [16]byte{}, ctx.Err()
+	}
+	return r, instance, err
 }

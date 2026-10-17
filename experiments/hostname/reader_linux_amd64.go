@@ -1,9 +1,10 @@
 package hostname
 
-// This exported facade exists only to connect the two experimental VM suites.
+// This exported facade serves the diagnostic reader and experimental Mihomo adapter.
 // It is not a stable service/map ABI and has no loader or operator entry point.
 
 import (
+	"context"
 	"errors"
 	"net/netip"
 	"time"
@@ -21,7 +22,13 @@ type Reader struct{ authority *authorityReader }
 // DialReader authenticates the root observer and obtains only frozen read-only
 // maps and a kernel peer pidfd. It never opens pins or reopens a numeric PID.
 func DialReader(path string, deadline time.Time) (*Reader, error) {
-	r, _, err := dialAuthority(path, deadline)
+	return DialReaderContext(context.Background(), path, deadline)
+}
+
+// DialReaderContext also interrupts bootstrap reads when configuration is
+// disabled or replaced. The original deadline still bounds every I/O operation.
+func DialReaderContext(ctx context.Context, path string, deadline time.Time) (*Reader, error) {
+	r, _, err := dialAuthorityContext(ctx, path, deadline)
 	if err != nil {
 		return nil, err
 	}
