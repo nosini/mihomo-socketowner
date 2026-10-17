@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestHostname(t *testing.T) {
@@ -46,19 +48,28 @@ func TestRejectUnknownBinary(t *testing.T) {
 	if err := os.WriteFile(p, []byte("unsupported"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkBinary(p, sslSHA256); err == nil {
+	if _, err := checkBinary(p, sslSHA256); err == nil {
 		t.Fatal("accepted unsupported library")
+	}
+	link := filepath.Join(t.TempDir(), "link.so")
+	if err := os.Symlink(p, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checkBinary(link, sslSHA256); err == nil {
+		t.Fatal("followed a library symlink")
 	}
 }
 
 func TestMappingBase(t *testing.T) {
 	maps := "7f1234000000-7f1234030000 r--p 00000000 00:01 12 /lib/libcrypto.so\n" +
 		"7f1234030000-7f1234040000 r-xp 00030000 00:01 12 /lib/libcrypto.so\n"
-	if base, err := mappingBase(maps, "/lib/libcrypto.so"); err != nil || base != 0x7f1234000000 {
+	id := fileIdentity{dev: unix.Mkdev(0, 1), ino: 12}
+	if base, err := mappingBase(maps, "/lib/libcrypto.so", id); err != nil || base != 0x7f1234000000 {
 		t.Fatalf("base %#x, error %v", base, err)
 	}
-	for _, m := range []string{"", strings.ReplaceAll(maps, "00000000", "00001000"), strings.ReplaceAll(maps, "/lib/libcrypto.so", "/lib/libcrypto.so (deleted)")} {
-		if _, err := mappingBase(m, "/lib/libcrypto.so"); err == nil {
+	for _, m := range []string{"", strings.ReplaceAll(maps, "00000000", "00001000"), strings.ReplaceAll(maps, "/lib/libcrypto.so", "/lib/libcrypto.so (deleted)"),
+		strings.ReplaceAll(maps, "00:01 12", "00:02 12"), strings.ReplaceAll(maps, "00:01 12", "00:01 13"), strings.ReplaceAll(maps, "00:01 12", "0001 12")} {
+		if _, err := mappingBase(m, "/lib/libcrypto.so", id); err == nil {
 			t.Fatal("accepted unavailable mapping")
 		}
 	}

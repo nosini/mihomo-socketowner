@@ -116,7 +116,8 @@ so recovery does not depend on the previous owner reaching ready state.
 
 Recovery happens on the next owner start. If no owner restarts, crash pins remain
 until trusted cleanup runs; readers still reject the dead peer immediately.
-There is no deployed watchdog, restart policy or operator command in this patch.
+The [observer command](OBSERVER.md) runs recovery on start and has a `cleanup`
+subcommand; there is still no deployed watchdog or restart policy.
 Boot/namespace/pin-root mismatches require deliberate administrative handling,
 rather than guessing which resources can be deleted.
 
@@ -141,8 +142,9 @@ owner pins. Without the authority VM environment, privileged tests skip.
 ## Next integration work
 
 The implementation remains private to `experiments/hostname`. Production use
-still needs a stable optional reader record contract, reader packaging, a
-resident observer CLI and tested service confinement/restart policy. The native
+still needs a stable optional reader record contract, reader packaging and
+tested service confinement/restart policy. The resident
+[observer command](OBSERVER.md) now packages this initialization. The native
 [lookup follow-up](NATIVE.md) provides independent configuration and bounded,
 cancelable bootstrap/lookup with routing-only descriptor lifetime.
 The exact-build, single-target, first-send/4 KiB and fixed-guard restrictions

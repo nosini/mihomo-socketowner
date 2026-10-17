@@ -164,77 +164,44 @@ func runAuthorityVMObserver(t *testing.T, config authorityVMConfig, dec *json.De
 			return
 		}
 	}
-	p, err := attachMode(config.Object, config.Cgroup, config.SSL, config.Crypto, config.PID, true)
+	spec, err := ebpf.LoadCollectionSpec(config.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The baseline handshake observer is not part of this authority contract.
+	p, err := attachSpec(spec, config.Cgroup, libraries{config.SSL, config.Crypto, profileLibc}, config.PID, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer p.close()
-	// The baseline handshake observer is not part of this authority contract.
-	p.uprobe.Close()
-	gate, err := ebpf.NewMap(&ebpf.MapSpec{Name: "authority", Type: ebpf.Array, KeySize: 4, ValueSize: 8, MaxEntries: 1, Flags: unix.BPF_F_RDONLY})
+	gate, manifest, err := pinAuthorityMaps(p, config.Directory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer gate.Close()
-	var manifest authorityManifest
-	for i, name := range authorityMapNames {
-		m := gate
-		if i != 0 {
-			m = p.collection.Maps[name]
-		}
-		if err := m.Pin(filepath.Join(config.Directory, name)); err != nil {
-			t.Fatal(err)
-		}
-		// RDONLY restricts the original FD, not the map globally. Freeze
-		// through a temporary writable FD before issuing reader capabilities.
-		writable, err := ebpf.LoadPinnedMap(filepath.Join(config.Directory, name), nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = writable.Freeze()
-		writable.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		manifest.Maps[i], err = mapIdentity(m)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
 	if err := p.collection.Maps["last_seeded"].Pin(filepath.Join(config.Directory, "last_seeded")); err != nil {
 		t.Fatal(err)
 	}
 	// Pins must exist for every required link, not only for records/programs.
 	if !config.Unpinned {
-		for _, l := range p.session.links {
-			if err := l.get().Pin(filepath.Join(config.Directory, "link_"+l.name)); err != nil {
-				t.Fatal(err)
-			}
+		paused := errors.New("paused after a partial link pin")
+		err := activateObserver(p, gate, config.Directory, func() error {
 			if owner != nil && config.Pause == "partial" {
 				pauseBootstrapVM(t, enc, dec, "partial", config.Directory)
-				return
+				return paused
 			}
+			return nil
+		})
+		if errors.Is(err, paused) {
+			return
 		}
-		if state := setAuthorityVM(t, gate, true); state != 1 {
-			t.Fatalf("failed to activate fresh authority: %d", state)
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 	reply := authorityVMReply{Manifest: manifest, Directory: config.Directory}
 	if owner != nil {
-		var maps [4]*ebpf.Map
-		for i, name := range authorityMapNames {
-			maps[i], err = ebpf.LoadPinnedMap(filepath.Join(config.Directory, name), &ebpf.LoadPinOptions{ReadOnly: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer maps[i].Close()
-		}
-		pidfd, err := unix.PidfdOpen(os.Getpid(), 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer unix.Close(pidfd)
-		ownedReader, err = newAuthorityReader(manifest, maps, pidfd)
+		ownedReader, err = ownAuthorityReader(config.Directory, manifest)
 		if err != nil {
 			t.Fatal(err)
 		}

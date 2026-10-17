@@ -6,8 +6,8 @@ Design and implementation record for optional application hostname discovery.
 | --- | --- |
 | Prepared | 2026-10-14 |
 | Project status | Milestone 1 in progress; experiment authorized and started 2026-10-16 |
-| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing |
-| Work not completed | Broader send/reinjection coverage; stable reader ABI and operator/service integration; full TLS/browser workloads |
+| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command |
+| Work not completed | Broader send/reinjection coverage; stable reader ABI and service unit/confinement; full TLS/browser workloads |
 | Intended reader | An agent returning to this workspace without the original conversation |
 
 This document preserves the user's objective and the resulting assessment. The
@@ -124,10 +124,17 @@ native cases pass alongside the earlier routing matrices, including delayed/late
 data, missing/stalled observers and post-match cancellation. Parsing a proposed
 configuration does not revoke active evidence.
 
+The [resident observer follow-up](../experiments/hostname/OBSERVER.md) moves the
+VM helpers' initialization into `mihomo-hostname-observer`, shared with those
+helpers. It attaches to one explicit target PID, cgroup and profile, checks that
+the target maps the hashed library files, and embeds the ordinary send object so
+fault-injection builds cannot be loaded. Signals, target exit and an unusable
+instance revoke readers before cleanup; startup and `cleanup` recover crashes.
+VM tests cover its lifecycle, refusals and send-guard exhaustion.
+
 Milestone 1 remains open for broader send coverage and reinjection. Stable
-optional reader records, resident observer entry
-points and service confinement remain unimplemented. These diagnostic maps must not become
-a stable public routing interface without that work.
+optional reader records and service confinement remain unimplemented. These
+diagnostic maps must not become a stable public routing interface without that work.
 
 ## Objective
 

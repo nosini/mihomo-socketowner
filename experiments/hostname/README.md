@@ -21,6 +21,10 @@ captured first-write bytes and TCP sequence positions. Its
 in-process sessions. Independent service operation and routing timing remain
 open; both experiments still keep all records private.
 
+Later steps separate the [observer and reader](AUTHORITY.md), authenticate the
+[bootstrap](BOOTSTRAP.md) and connect it to Mihomo's [native lookup](NATIVE.md).
+To run the observer for Mihomo, use the [observer command](OBSERVER.md).
+
 ## Running
 
 Use a disposable Linux x86-64 test VM with cgroup v2, kernel BTF, uprobe support,

@@ -13,6 +13,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"golang.org/x/sys/unix"
 )
 
 // Offsets were checked against the getters and BIO_s_socket in these exact
@@ -47,25 +48,36 @@ type probe struct {
 	session     *observerSession
 }
 
-func checkBinary(path, want string) error {
-	f, err := os.Open(path)
+// fileIdentity is a library's device and inode, as /proc/PID/maps reports them.
+type fileIdentity struct{ dev, ino uint64 }
+
+// checkBinary hashes the opened file and returns its identity, so the later
+// mapping comparison refers to the same bytes. A final symlink is rejected.
+func checkBinary(path, want string) (fileIdentity, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return err
+		return fileIdentity{}, err
 	}
 	defer f.Close()
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(f.Fd()), &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFREG {
+		return fileIdentity{}, fmt.Errorf("unsupported binary %s: not a regular file", path)
+	}
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return err
+		return fileIdentity{}, err
 	}
 	if got := fmt.Sprintf("%x", h.Sum(nil)); got != want {
-		return fmt.Errorf("unsupported binary %s: SHA256 %s", path, got)
+		return fileIdentity{}, fmt.Errorf("unsupported binary %s: SHA256 %s", path, got)
 	}
-	return nil
+	return fileIdentity{stat.Dev, stat.Ino}, nil
 }
 
 // mappingBase requires a file-backed offset-zero mapping of the verified
 // library. The fixture loads its libraries before it waits for attachment.
-func mappingBase(maps, path string) (uint64, error) {
+// The mapped device and inode must be the hashed file's: a process in another
+// mount namespace can map a different file under the same path.
+func mappingBase(maps, path string, id fileIdentity) (uint64, error) {
 	for _, line := range strings.Split(maps, "\n") {
 		f := strings.Fields(line)
 		if len(f) != 6 || f[5] != path || f[2] != "00000000" {
@@ -74,6 +86,13 @@ func mappingBase(maps, path string) (uint64, error) {
 		start, _, ok := strings.Cut(f[0], "-")
 		if !ok {
 			continue
+		}
+		major, minor, ok := strings.Cut(f[3], ":")
+		maj, majErr := strconv.ParseUint(major, 16, 32)
+		min, minErr := strconv.ParseUint(minor, 16, 32)
+		ino, inoErr := strconv.ParseUint(f[4], 10, 64)
+		if !ok || majErr != nil || minErr != nil || inoErr != nil || unix.Mkdev(uint32(maj), uint32(min)) != id.dev || ino != id.ino {
+			return 0, fmt.Errorf("mapped %s is not the verified file", path)
 		}
 		base, err := strconv.ParseUint(start, 16, 64)
 		if err != nil {
@@ -84,6 +103,12 @@ func mappingBase(maps, path string) (uint64, error) {
 	return 0, fmt.Errorf("verified library %s has no offset-zero mapping", path)
 }
 
+// The live-send profile's libc. The baseline snapshot needs only OpenSSL.
+const profileLibc = "/usr/lib64/libc.so.6"
+
+// libraries names the exact files of the verified profile, as the target maps them.
+type libraries struct{ SSL, Crypto, C string }
+
 // attach is deliberately private to the experiment. Target PID and exact
 // binaries are mandatory; there is no system-wide discovery or attachment.
 func attach(object, cgroup, sslPath, cryptoPath string, pid int) (_ *probe, err error) {
@@ -91,28 +116,36 @@ func attach(object, cgroup, sslPath, cryptoPath string, pid int) (_ *probe, err 
 }
 
 func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bool) (_ *probe, err error) {
+	spec, err := ebpf.LoadCollectionSpec(object)
+	if err != nil {
+		return nil, err
+	}
+	return attachSpec(spec, cgroup, libraries{sslPath, cryptoPath, profileLibc}, pid, liveSend, true)
+}
+
+// attachSpec attaches the experiment to one target. The handshake uprobe is
+// the baseline diagnostic; the live-send authority contract does not use it.
+func attachSpec(spec *ebpf.CollectionSpec, cgroup string, libs libraries, pid int, liveSend, handshake bool) (_ *probe, err error) {
 	if pid <= 0 {
 		return nil, fmt.Errorf("target PID must be positive")
 	}
-	if err := checkBinary(sslPath, sslSHA256); err != nil {
+	sslID, err := checkBinary(libs.SSL, sslSHA256)
+	if err != nil {
 		return nil, err
 	}
-	if err := checkBinary(cryptoPath, cryptoSHA256); err != nil {
+	cryptoID, err := checkBinary(libs.Crypto, cryptoSHA256)
+	if err != nil {
 		return nil, err
 	}
 	maps, err := os.ReadFile(fmt.Sprintf("/proc/%d/maps", pid))
 	if err != nil {
 		return nil, err
 	}
-	sslBase, err := mappingBase(string(maps), sslPath)
+	sslBase, err := mappingBase(string(maps), libs.SSL, sslID)
 	if err != nil {
 		return nil, err
 	}
-	base, err := mappingBase(string(maps), cryptoPath)
-	if err != nil {
-		return nil, err
-	}
-	spec, err := ebpf.LoadCollectionSpec(object)
+	base, err := mappingBase(string(maps), libs.Crypto, cryptoID)
 	if err != nil {
 		return nil, err
 	}
@@ -126,11 +159,11 @@ func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bo
 		if err := validateSendGuardMap(spec.Maps["send_guards"]); err != nil {
 			return nil, err
 		}
-		const libcPath = "/usr/lib64/libc.so.6"
-		if err := checkBinary(libcPath, libcSHA256); err != nil {
+		libcID, err := checkBinary(libs.C, libcSHA256)
+		if err != nil {
 			return nil, err
 		}
-		libcBase, err := mappingBase(string(maps), libcPath)
+		libcBase, err := mappingBase(string(maps), libs.C, libcID)
 		if err != nil {
 			return nil, err
 		}
@@ -170,13 +203,15 @@ func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bo
 	if err != nil {
 		return nil, err
 	}
-	exe, err := link.OpenExecutable(sslPath)
-	if err != nil {
-		return nil, err
-	}
-	p.uprobe, err = exe.Uprobe("SSL_do_handshake", coll.Programs["snapshot"], &link.UprobeOptions{PID: pid})
-	if err != nil {
-		return nil, err
+	if handshake {
+		exe, err := link.OpenExecutable(libs.SSL)
+		if err != nil {
+			return nil, err
+		}
+		p.uprobe, err = exe.Uprobe("SSL_do_handshake", coll.Programs["snapshot"], &link.UprobeOptions{PID: pid})
+		if err != nil {
+			return nil, err
+		}
 	}
 	if liveSend {
 		p.release, err = link.AttachCgroup(link.CgroupOptions{Path: cgroup, Attach: ebpf.AttachCgroupInetSockRelease, Program: coll.Programs["release_send"]})

@@ -9,7 +9,8 @@ now owns the pre-routing wait and reader lifetime. Its independent
 explicit 1–250 ms budget and a canonical absolute endpoint. Ordinary builds
 reject enablement; the diagnostic adapter requires Linux amd64 and
 `hostname_discovery_experimental` in a temporary two-module Go workspace.
-There is no installed observer service or stable public map interface yet.
+The [resident observer command](OBSERVER.md) serves that endpoint; there is
+no installed observer service or stable public map interface yet.
 
 Each eligible TCP REDIRECT attempt opens one authenticated reader and uses one
 absolute deadline for bootstrap, polling and post-match validation. It cannot
@@ -61,5 +62,6 @@ helper's absolute path and select `TestVMHostnameNativeLookup`. Add
 No existing service, firewall namespace or owner pin is modified. The C/BPF
 profile, first-send and fixed-guard restrictions are unchanged. Full TLS,
 throughput/latency under load, broader send/reinjection behavior and browser
-encrypted-DNS/ECH coverage remain open. Production observer packaging, CLI and
-service confinement/restart policy are the next integration work.
+encrypted-DNS/ECH coverage remain open. The [observer command](OBSERVER.md)
+now exists; its service unit, confinement and restart policy are the next
+integration work.
