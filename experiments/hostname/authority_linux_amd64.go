@@ -6,6 +6,7 @@ package hostname
 // pidfd is ready. No link FD or writable map is given to this reader.
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -118,7 +119,16 @@ func pidfdAlive(fd int) error {
 		return errObserverUnavailable
 	}
 	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-	n, err := unix.Poll(poll, 0)
+	var n int
+	var err error
+	// Interruption is not observer death. Bound retries so a signal storm
+	// still fails closed instead of holding a lookup past its budget.
+	for attempt := 0; attempt < 3; attempt++ {
+		n, err = unix.Poll(poll, 0)
+		if !errors.Is(err, unix.EINTR) {
+			break
+		}
+	}
 	if err != nil || n != 0 || poll[0].Revents != 0 {
 		return fmt.Errorf("%w: exited or invalid observer pidfd (%v)", errObserverUnavailable, err)
 	}
