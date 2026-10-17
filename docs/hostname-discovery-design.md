@@ -677,7 +677,12 @@ key-share HelloRetryRequest also completes through confined IPv4/IPv6 TUN and
 local auto-redirect, preserving the committed connection and route through
 repeated exchanges and observer loss. Message counts distinguish the retry from
 a no-retry control; wrong pins still reject application traffic. Browser
-workloads, early data, cookie-only HRR and HTTP/2/cross-origin reuse remain unproved.
+workloads, early data, cookie-only HRR and cross-origin reuse remain unproved.
+Controlled same-origin HTTP/2 multiplexing/reuse over TLS 1.2/1.3 is also verified
+through both confined paths/families. Named and fallback connections retain
+their committed route through observer restart and later concurrent streams;
+fresh hostnames still select the appropriate rule. No per-stream hostname
+attribution or HTTP/2 parsing is added to the runtime.
 
 Local nftables [auto-redirect](../experiments/hostname/TUN.md) already labels its
 accepted TCP connections REDIR, so its existing post-NAT lookup needs no routing

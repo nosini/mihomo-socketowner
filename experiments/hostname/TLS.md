@@ -28,17 +28,17 @@ For both IPv4 and IPv6, the matrix fixes TLS 1.2 or TLS 1.3 and checks:
 The [profile-3 extension](RETRIES.md) adds, for both TLS versions, a
 ClientHello larger than the historical 4 KiB limit and an exchange whose
 ClientHello needs real nonblocking retries. Each default TUN IP-family run has
-forty-one TLS connections: thirty-three successful application exchanges and
-eight deliberate certificate/hostname/pin rejections, including the TUN and
-resumption cases below. It also reruns the service confinement,
+fifty-four TLS connections: forty-three successful application exchanges and
+eleven deliberate certificate/hostname/pin rejections, including the TUN,
+resumption, key-share HRR and HTTP/2 cases below. It also reruns the service confinement,
 missing/stale registration, kill-switch, restart, disable/re-enable and
 target-exit checks with SELinux enforcing.
 
 The service harness's `--auto-redirect` mode runs the remote-server and
 resumption groups through the actual local nftables redirect listener, which
 supplies REDIR metadata. Eight additional cases check certificate, hostname and
-pin behavior for both TLS versions there: forty-nine completed TLS connections
-per family (thirty-five successful application connections, fourteen deliberate
+pin behavior for both TLS versions there: sixty-two TLS test connections
+per family (forty-five successful application connections, seventeen deliberate
 rejections). A separate two-ClientHello collision group checks different
 names/destinations at one requested source port and real NAT source-port remapping.
 The original loopback REDIRECT groups remain in this matrix. See [TUN and
@@ -152,6 +152,22 @@ References: OpenSSL [group selection](https://docs.openssl.org/3.5/man3/SSL_CTX_
 [message callback](https://docs.openssl.org/3.5/man3/SSL_CTX_set_msg_callback/), and
 [RFC 8446 HRR encoding](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.1.3).
 
+Controlled HTTP/2 multiplexing and reuse also pass over TLS 1.2/1.3 through
+both confined interception modes and address families. The fixture offers only
+`h2` ALPN and exposes bounded `tls-send`/`tls-recv` byte transport after
+`tls-ready` verifies the peer certificate, hostname, pin and negotiated ALPN.
+The harness's packaged hyper-h2 library supplies HTTP/2/HPACK state machines at
+both peers; no new Go dependency or TLS adapter is needed. The original
+`exchange` command retains its combined five-second handshake/application budget.
+
+Each version proves two simultaneously open streams, interleaved request DATA
+and out-of-order/interleaved responses with correct status/bodies. Named and
+ordinary-fallback connections retain their original ID/chain/destination through
+observer stop/restart and later streams; a fresh connection with a changed SNI
+selects RENAMED. Wrong pins send no HTTP/2 preface or request. This covers
+same-origin reuse on the controlled socket-BIO fixture, not browser coalescing
+across origins or general HTTP/2 conformance.
+
 The harness creates ephemeral test certificates in its run directory. Trust is
 never added to the system store. Only the client and fixture server handle TLS
 keys or application bytes; the observer and reader gain no such access.
@@ -159,7 +175,7 @@ keys or application bytes; the observer and reader gain no such access.
 This proves completed TLS for the exact supported OpenSSL profile and controlled
 TCP REDIRECT and system-stack TUN paths. Resumption is tested with TLS tickets
 and the controlled OpenSSL socket-BIO fixture. It does not establish browser
-compatibility, encrypted DNS, ECH, early data, cookie-only HRR, HTTP/2 or
+compatibility, encrypted DNS, ECH, early data, cookie-only HRR or
 cross-origin reuse, other send shapes, TPROXY, throughput or a
 production latency budget. The observer admits only one initial ClientHello
 window and verified retries of its remaining bytes, as defined by

@@ -20,7 +20,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-struct connection { SSL *ssl; int fd; int used; char pin[65]; unsigned client_hellos, hello_retries; } connections[512];
+struct connection { SSL *ssl; int fd; int used; char pin[65]; unsigned client_hellos, hello_retries; int verified; } connections[512];
 // Count protocol messages only; never retain handshake contents or secrets.
 static void count_hellos(int writing, int version, int type, const void *data,
                          size_t length, SSL *ssl, void *arg)
@@ -147,10 +147,9 @@ static int retry_tls(struct connection *c, int error, int64_t deadline)
 		return ret > 0;
 	}
 }
-static void exchange(int i)
+static int verify_tls(int i, const char *operation, int64_t deadline)
 {
 	struct connection *c = &connections[i];
-	int64_t deadline = monotonic_ms() + 5000;
 	int ret, error;
 	do {
 		ERR_clear_error();
@@ -163,8 +162,8 @@ static void exchange(int i)
 			        ret, error, SSL_pending(c->ssl), SSL_has_pending(c->ssl));
 			ERR_print_errors_fp(stderr);
 		}
-		printf("exchange %d handshake-failed %ld\n", i, SSL_get_verify_result(c->ssl));
-		return;
+		printf("%s %d handshake-failed %ld\n", operation, i, SSL_get_verify_result(c->ssl));
+		return 0;
 	}
 	// Check the exact peer certificate before sending application data. The
 	// private test CA is loaded only into this client, never the system store.
@@ -176,9 +175,17 @@ static void exchange(int i)
 	char pin[65];
 	for (unsigned int n = 0; n < length; n++) snprintf(pin + n * 2, 3, "%02x", digest[n]);
 	if (strcmp(c->pin, pin)) {
-		printf("exchange %d pin-failed\n", i);
-		return;
+		printf("%s %d pin-failed\n", operation, i);
+		return 0;
 	}
+	return 1;
+}
+static void exchange(int i)
+{
+	struct connection *c = &connections[i];
+	int64_t deadline = monotonic_ms() + 5000;
+	if (!verify_tls(i, "exchange", deadline)) return;
+	int ret, error;
 	static const char request[] = "hostname-fixture-request\n";
 	static const char response[] = "hostname-fixture-response\n";
 	size_t written = 0;
@@ -203,6 +210,36 @@ static void exchange(int i)
 	}
 	check(!memcmp(received, response, sizeof(received)), "TLS response bytes");
 	printf("exchange %d ok %s\n", i, SSL_get_version(c->ssl));
+}
+// Bounded application transport for the external HTTP/2 state machines.
+// The fixture does not implement HTTP/2 or expose a raw pre-verification write.
+static void application_io(int i, const char *hex)
+{
+	struct connection *c = &connections[i];
+	check(c->verified, "verified application transport");
+	unsigned char data[2048];
+	int64_t deadline = monotonic_ms() + 5000;
+	size_t length = hex ? strlen(hex) / 2 : 0, count = 0;
+	if (hex) {
+		check(strlen(hex) % 2 == 0 && length > 0 && length <= sizeof(data), "application bytes");
+		for (size_t j = 0; j < length; j++) {
+			unsigned int value;
+			check(sscanf(hex + 2 * j, "%2x", &value) == 1, "application hex");
+			data[j] = (unsigned char)value;
+		}
+	}
+	int ret, error;
+	do {
+		ERR_clear_error();
+		ret = hex ? SSL_write_ex(c->ssl, data, length, &count) :
+		            SSL_read_ex(c->ssl, data, sizeof(data), &count);
+		error = SSL_get_error(c->ssl, ret);
+	} while (ret != 1 && retry_tls(c, error, deadline));
+	check(ret == 1 && count > 0 && (!hex || count == length), "application TLS I/O");
+	if (hex) { puts("ok"); return; }
+	printf("tls-data %d ", i);
+	for (size_t j = 0; j < count; j++) printf("%02x", data[j]);
+	putchar('\n');
 }
 static void shutdown_tls(int i)
 {
@@ -262,7 +299,7 @@ int main(int argc, char **argv)
 	check(ctx != NULL, "SSL_CTX_new");
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	puts("ready");
-	char line[1024], op[32], name[512], order[32], mode[32];
+	char line[8192], op[32], name[512], order[32], mode[32];
 	while (fgets(line, sizeof(line), stdin)) {
 		int i = -1;
 		check(sscanf(line, "%31s", op) == 1, "command");
@@ -317,7 +354,28 @@ int main(int argc, char **argv)
 			check(SSL_set_min_proto_version(c->ssl, protocol) == 1 &&
 			      SSL_set_max_proto_version(c->ssl, protocol) == 1, "TLS version");
 			memcpy(c->pin, pin, sizeof(pin));
+			c->verified = 0;
 			puts("ok");
+		} else if (!strcmp(op, "h2-alpn")) {
+			static const unsigned char alpn[] = {2, 'h', '2'};
+			check(SSL_set_alpn_protos(c->ssl, alpn, sizeof(alpn)) == 0, "HTTP/2 ALPN");
+			puts("ok");
+		} else if (!strcmp(op, "tls-ready")) {
+			c->verified = 0;
+			if (verify_tls(i, "tls-ready", monotonic_ms() + 5000)) {
+				const unsigned char *alpn;
+				unsigned int length;
+				SSL_get0_alpn_selected(c->ssl, &alpn, &length);
+				check(length == 2 && !memcmp(alpn, "h2", 2), "negotiated HTTP/2");
+				c->verified = 1;
+				printf("tls-ready %d ok %s h2\n", i, SSL_get_version(c->ssl));
+			}
+		} else if (!strcmp(op, "tls-send")) {
+			char hex[4097];
+			check(sscanf(line, "%*s %*d %4096s", hex) == 1, "application send");
+			application_io(i, hex);
+		} else if (!strcmp(op, "tls-recv")) {
+			application_io(i, NULL);
 		} else if (!strcmp(op, "groups")) {
 			char groups[128];
 			check(sscanf(line, "%*s %*d %127s", groups) == 1, "groups");
@@ -354,6 +412,7 @@ int main(int argc, char **argv)
 			// and name. Resumption, when requested, uses the separate command.
 			check(SSL_set_session(c->ssl, NULL) == 1 && SSL_clear(c->ssl) == 1, "clear SSL");
 			SSL_set_connect_state(c->ssl);
+			c->verified = 0;
 			check(SSL_set_tlsext_host_name(c->ssl, strcmp(name, "-") ? name : NULL) == 1, "reopen hostname");
 			int fd = connect_socket();
 			check(SSL_set_fd(c->ssl, fd) == 1, "reopen descriptor");
