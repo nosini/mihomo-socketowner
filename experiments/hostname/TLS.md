@@ -28,7 +28,7 @@ For both IPv4 and IPv6, the matrix fixes TLS 1.2 or TLS 1.3 and checks:
 The [profile-3 extension](RETRIES.md) adds, for both TLS versions, a
 ClientHello larger than the historical 4 KiB limit and an exchange whose
 ClientHello needs real nonblocking retries. Each default TUN IP-family run has
-fifty-four TLS connections: forty-three successful application exchanges and
+fifty-six TLS connections: forty-five successful application exchanges and
 eleven deliberate certificate/hostname/pin rejections, including the TUN,
 resumption, key-share HRR and HTTP/2 cases below. It also reruns the service confinement,
 missing/stale registration, kill-switch, restart, disable/re-enable and
@@ -37,8 +37,8 @@ target-exit checks with SELinux enforcing.
 The service harness's `--auto-redirect` mode runs the remote-server and
 resumption groups through the actual local nftables redirect listener, which
 supplies REDIR metadata. Eight additional cases check certificate, hostname and
-pin behavior for both TLS versions there: sixty-two TLS test connections
-per family (forty-five successful application connections, seventeen deliberate
+pin behavior for both TLS versions there: sixty-four TLS test connections
+per family (forty-seven successful application connections, seventeen deliberate
 rejections). A separate two-ClientHello collision group checks different
 names/destinations at one requested source port and real NAT source-port remapping.
 The original loopback REDIRECT groups remain in this matrix. See [TUN and
@@ -186,8 +186,8 @@ keys or application bytes; the observer and reader gain no such access.
 This proves completed TLS for the exact supported OpenSSL profile and controlled
 TCP REDIRECT and system-stack TUN paths. Resumption is tested with TLS tickets
 and the controlled OpenSSL socket-BIO fixture. It does not establish browser
-compatibility, encrypted DNS, ECH, early data, cookie-only HRR or
-cross-origin reuse, other send shapes, TPROXY, throughput or a
+compatibility, encrypted DNS, ECH, early data, cookie-only HRR, automatic
+browser coalescing/retry policy, other send shapes, TPROXY, throughput or a
 production latency budget. The observer admits only one initial ClientHello
 window and verified retries of its remaining bytes, as defined by
 [profile 3](../../hostname/PROFILE3.md); unsupported later sends revoke
@@ -203,3 +203,16 @@ select RENAMED. The retry completes before releasing the original sibling;
 that sibling and subsequent streams retain NAMED on the original connection.
 This is explicit fixture retry behavior, not a browser retry-policy test. See
 [RFC 9110 section 15.5.20](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.20).
+
+
+The optional service `--curl-compat` group also checks a real unmodified curl
+8.22.0/OpenSSL 3.5.3 application. With the exact target registered and confined
+observer active before transfer, both reserved origins remain unattributed and
+use ordinary DIRECT fallback. Verified HTTP/1.1 exchanges still complete for
+both TLS versions/families/interception modes. Wrong-host and SPKI-pin checks
+reject before any HTTP request (curl exit 60/90). Each mode/family adds eight
+TLS connections, four successful fallback requests and four deliberate rejects.
+This is evidence of a compatibility limit: curl's custom connection-filter BIO
+is outside the current raw socket-BIO/live-stack profile. Same OpenSSL binaries
+do not imply a supported send path. No adapter/profile or runtime checks were
+changed. See the service development guide for reproduction and evidence.
