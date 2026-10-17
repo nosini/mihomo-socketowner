@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/link"
 	"golang.org/x/sys/unix"
 )
 
@@ -131,7 +132,7 @@ func (r *observerVMRun) instance() string {
 
 // connect gives the fixture a reader for the running instance. The resident
 // observer does not pin last_seeded, so the fixture's socket-creation check
-// uses the newest map of that name instead.
+// finds it through this instance's pinned socket-create program.
 func (r *observerVMRun) connect() *authorityVMFixture {
 	t := r.t
 	t.Helper()
@@ -139,25 +140,41 @@ func (r *observerVMRun) connect() *authorityVMFixture {
 	if a.path == "" {
 		t.Fatal("running observer has no pins")
 	}
+	// Global map-name/ID ordering can select another concurrently running
+	// observer. Resolve the diagnostic map from this instance's exact link.
+	create, err := link.LoadPinnedLink(filepath.Join(a.path, "link_create"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := create.Info()
+	create.Close() // Do not keep the attachment alive across observer stop.
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := ebpf.NewProgramFromID(info.Program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	programInfo, err := program.Info()
+	program.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, ok := programInfo.MapIDs()
+	if !ok {
+		t.Fatal("socket-create program map IDs unavailable")
+	}
 	var seed *ebpf.Map
-	for id := ebpf.MapID(0); ; {
-		next, err := ebpf.MapGetNextID(id)
-		if err != nil {
-			break
-		}
-		id = next
+	for _, id := range ids {
 		m, err := ebpf.NewMapFromID(id)
 		if err != nil {
-			continue
+			t.Fatal(err)
 		}
 		if info, err := m.Info(); err == nil && info.Name == "last_seeded" {
-			if seed != nil {
-				seed.Close()
-			}
 			seed = m
-		} else {
-			m.Close()
+			break
 		}
+		m.Close()
 	}
 	if seed == nil {
 		t.Fatal("observer has no last_seeded map")
@@ -499,4 +516,18 @@ func TestVMObserverRegistration(t *testing.T) {
 		t.Fatalf("registered cleanup: %d %s", status, log)
 	}
 	r.assertStopped()
+}
+
+// A newer unrelated map with the same diagnostic name must never be mistaken
+// for the selected observer's sock-create evidence.
+func TestVMObserverDiagnosticMapIdentity(t *testing.T) {
+	r := newObserverVMRun(t)
+	r.start()
+	foreign, err := ebpf.NewMap(&ebpf.MapSpec{Name: "last_seeded", Type: ebpf.Array, KeySize: 4, ValueSize: 8, MaxEntries: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer foreign.Close()
+	a := r.connect()
+	a.named(t)
 }
