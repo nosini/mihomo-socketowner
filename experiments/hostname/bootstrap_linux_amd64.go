@@ -1,6 +1,7 @@
 package hostname
 
-// Experimental bootstrap v1, deliberately separate from the owner-map ABI.
+// Hostname bootstrap v1/profile 1, frozen in hostname/CONTRACT.md and
+// deliberately separate from the owner-map ABI.
 // The socket-creating process is also the observer/cleanup owner. Socket
 // activation, descriptor delegation and alternate PID namespaces are excluded.
 
@@ -42,7 +43,7 @@ func (h bootstrapHeader) encode() []byte {
 	for i, id := range h.Manifest.Maps {
 		binary.LittleEndian.PutUint32(b[48+i*4:], uint32(id))
 	}
-	binary.LittleEndian.PutUint32(b[64:], 1) // exact diagnostic first-send layout profile
+	binary.LittleEndian.PutUint32(b[64:], 1) // fixed sole-first-send layout profile
 	return b
 }
 

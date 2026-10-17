@@ -7,8 +7,10 @@ kernel peer pidfd. Only the test control socket is inherited. No hostname, map
 descriptor or pidfd is supplied to Mihomo by the supervisor.
 
 This connects the existing [authority](AUTHORITY.md) and [routing](ROUTING.md)
-experiments. The exported facade in `reader_linux_amd64.go` is experimental; it
-does not declare a stable public map ABI or install a reader or observer service.
+experiments. The consumer now imports the independent
+[`hostname` reader module](../../hostname/README.md), implementing the optional v1
+contract. The old experimental facade remains for historical tests. No observer
+service is installed.
 Ordinary Mihomo builds have no socketowner dependency or enabled backend.
 The [native lookup follow-up](NATIVE.md) adds independent configuration and a
 bounded tunnel hook behind an explicit experimental backend build tag.
@@ -80,19 +82,19 @@ ECH, broader sends and reinjection remain outside these results.
 
 ## Building the companion
 
-The extra test file imports the experimental facade only under
+The extra test file imports the independent reader module only under
 `hostname_vm && hostname_reader_vm`. Build it in a temporary Go workspace that
-contains both checkouts. This avoids committing an unpublished cross-repository
-dependency or a machine-specific `replace` directive. From the parent workspace,
+contains Mihomo, socketowner and socketowner/hostname. This avoids committing
+an unpublished cross-repository dependency or a machine-specific `replace` directive. From the parent workspace,
 with `route_build` set to an existing absolute task build directory:
 
 ```sh
 workspace="$PWD"
-(cd "$route_build" && go work init "$workspace/mihomo" "$workspace/socketowner")
+(cd "$route_build" && go work init "$workspace/mihomo" "$workspace/socketowner" "$workspace/socketowner/hostname")
 (cd mihomo && GOWORK="$route_build/go.work" go test -c -race \
   -tags 'hostname_vm hostname_reader_vm' \
   -o "$route_build/mihomo-reader.test" ./tunnel)
-(cd socketowner && go test -c -race -tags hostname_vm \
+(cd socketowner && GOWORK="$route_build/go.work" go test -c -race -tags hostname_vm \
   -o "$route_build/hostname.test" ./experiments/hostname)
 ```
 
@@ -105,9 +107,9 @@ Neither test deploys a service or modifies existing owner pins.
 
 ## Remaining integration
 
-The map and bootstrap layouts still belong to the exact diagnostic profile.
-Production work needs a separately versioned optional reader contract, packaging,
-a resident observer entry point and service confinement/restart policy. The
+The separately versioned [reader module and contract](../../hostname/README.md)
+now package this consumer. The resident observer command also exists. Production
+work still needs service confinement and restart policy. The
 native follow-up supplies independent configuration and a bounded inbound lookup.
 The existing process owner map/loader and
 kill-switch are unchanged. Guard reclamation, broader sends and transport/runtime

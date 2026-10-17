@@ -7,7 +7,9 @@ experiment, packaged as a command. It is separate from `socketowner`;
 process lookup does not need it, and it does not need process lookup.
 
 This is still an experiment. It supports exactly one verified OpenSSL build
-and one target process per observer, and its maps are not a stable interface.
+and one target process per observer, and its raw diagnostic maps are not standalone routing evidence. The optional
+[hostname contract v1](../../docs/hostname-interface.md) defines the authenticated
+reader bundle and its lifetime checks.
 
 ## Building
 
@@ -145,7 +147,7 @@ test binaries built with the race detector:
 - Finding targets by itself. One observer follows one PID; a different
   OpenSSL build, Flatpak runtime or statically linked program is unsupported.
 - Reclaiming send guards without a restart.
-- A stable, separately versioned reader interface. The bootstrap protocol and
-  map layouts are still the experiment's.
+- Published releases of the [separate reader module](../../hostname/README.md).
+  Its v1 contract now freezes the existing bootstrap/profile layout.
 - `exec` by the target is not detected. After it, libraries normally load at
   new addresses, so the frame checks stop matching and names become unknown.

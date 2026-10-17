@@ -6,9 +6,10 @@ extends [AUTHORITY.md](AUTHORITY.md), preserving its frozen-map, pinned-link,
 pidfd and irreversible-revocation rules. It is not wired into the installed
 loader, Mihomo configuration, service generator or service units.
 
-The prototype protocol is versioned so incompatible messages are rejected. It
-does not establish a stable public hostname ABI or generic runtime support. The
-existing socketowner v1 owner-map interface remains unchanged.
+The protocol rejects incompatible messages. Its existing bytes and reader
+semantics are now frozen in the separate [hostname contract v1](../../docs/hostname-interface.md);
+this historical experiment document describes the implementation. It does not
+establish generic runtime support. The owner-map ABI remains unchanged.
 
 ## Endpoint and peer identity
 
@@ -32,7 +33,7 @@ describes credential snapshots, pathname permissions and descriptor passing.
 The kernel's [peer-pidfd implementation](https://github.com/torvalds/linux/blob/v6.18/net/core/sock.c)
 provides the process reference used here. Missing kernel support fails closed.
 
-## Experimental protocol v1
+## Bootstrap protocol v1
 
 One request and one response use separate 80-byte packets. Integers in this
 envelope are little endian. Reserved bytes and status must be zero.
@@ -47,7 +48,7 @@ envelope are little endian. Reserved bytes and status must be zero.
 | 16 | 16 | Random client nonce, echoed in the response |
 | 32 | 16 | Instance ID; zero in request, nonzero in response |
 | 48 | 16 | Four uint32 map IDs in response order; zero in request |
-| 64 | 4 | Diagnostic layout profile, 1 |
+| 64 | 4 | Sole-first-send layout profile, 1 |
 | 68 | 12 | Reserved, zero |
 
 The response passes exactly four read-only map FDs using `SCM_RIGHTS`, in order:
@@ -141,9 +142,8 @@ owner pins. Without the authority VM environment, privileged tests skip.
 
 ## Next integration work
 
-The implementation remains private to `experiments/hostname`. Production use
-still needs a stable optional reader record contract, reader packaging and
-tested service confinement/restart policy. The resident
+The implementation remains private to `experiments/hostname`. The [separate reader module](../../hostname/README.md) now packages contract v1.
+Production use still needs tested service confinement/restart policy. The resident
 [observer command](OBSERVER.md) now packages this initialization. The native
 [lookup follow-up](NATIVE.md) provides independent configuration and bounded,
 cancelable bootstrap/lookup with routing-only descriptor lifetime.

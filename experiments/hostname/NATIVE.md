@@ -7,10 +7,11 @@ Mihomo's [native hostname lookup](../../../mihomo/docs/hostname-discovery.md)
 now owns the pre-routing wait and reader lifetime. Its independent
 `hostname-discovery` setting is disabled by default. Enabling requires an
 explicit 1–250 ms budget and a canonical absolute endpoint. Ordinary builds
-reject enablement; the diagnostic adapter requires Linux amd64 and
-`hostname_discovery_experimental` in a temporary two-module Go workspace.
-The [resident observer command](OBSERVER.md) serves that endpoint; there is
-no installed observer service or stable public map interface yet.
+reject enablement; the optional adapter requires Linux amd64 and
+`hostname_discovery` with the independent `hostname` reader module. See the
+[current build instructions](../../../mihomo/docs/hostname-discovery.md#development-build-and-validation).
+The [resident observer command](OBSERVER.md) serves that endpoint using the
+[optional v1 contract](../../hostname/CONTRACT.md); there is no installed observer service.
 
 Each eligible TCP REDIRECT attempt opens one authenticated reader and uses one
 absolute deadline for bootstrap, polling and post-match validation. It cannot
@@ -51,7 +52,7 @@ without revoking already active evidence.
 ## Running
 
 Use the existing [consumption build](CONSUMPTION.md) and add
-`hostname_discovery_experimental` to the Mihomo test build tags. Build both
+`hostname_discovery` to the Mihomo test build tags. Build both
 binaries with `-race`. In the isolated VM mount/network namespace with private
 bpffs and the existing C/BPF objects, set `HOSTNAME_VM_NATIVE_MIHOMO` to the
 helper's absolute path and select `TestVMHostnameNativeLookup`. Add

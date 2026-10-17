@@ -63,6 +63,11 @@ executable. A loader update takes effect when its service is restarted.
 
 See [development](docs/development.md) for source builds and tests.
 
+The experimental [application hostname observer](experiments/hostname/OBSERVER.md)
+and [optional hostname reader module](hostname/README.md) are separate from
+process lookup. Their [v1 contract](docs/hostname-interface.md) does not change
+the owner-map ABI or install an observer service.
+
 ## License
 
 [GNU GPL v3](LICENSE). The BPF object files retain the same license as their

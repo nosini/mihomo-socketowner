@@ -6,8 +6,8 @@ Design and implementation record for optional application hostname discovery.
 | --- | --- |
 | Prepared | 2026-10-14 |
 | Project status | Milestone 1 in progress; experiment authorized and started 2026-10-16 |
-| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command |
-| Work not completed | Broader send/reinjection coverage; stable reader ABI and service unit/confinement; full TLS/browser workloads |
+| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module |
+| Work not completed | Broader send/reinjection coverage; service unit/confinement; full TLS/browser workloads |
 | Intended reader | An agent returning to this workspace without the original conversation |
 
 This document preserves the user's objective and the resulting assessment. The
@@ -132,9 +132,18 @@ fault-injection builds cannot be loaded. Signals, target exit and an unusable
 instance revoke readers before cleanup; startup and `cleanup` recover crashes.
 VM tests cover its lifecycle, refusals and send-guard exhaustion.
 
-Milestone 1 remains open for broader send coverage and reinjection. Stable
-optional reader records and service confinement remain unimplemented. These
-diagnostic maps must not become a stable public routing interface without that work.
+The [optional reader contract follow-up](hostname-interface.md) freezes bootstrap
+v1/profile 1 and packages its capability-free consumer in the independently
+versioned `hostname` Go module. Mihomo's optional backend and direct-reader VM
+adapter import that module, without importing the experimental observer package.
+The normal Mihomo module graph remains independent; an explicit build helper
+accepts a released reader version or a local reader checkout. No release has been
+published yet.
+
+Milestone 1 remains open for broader send coverage and reinjection. Service
+confinement and operational integration remain unimplemented. Raw diagnostic
+maps alone are never a public routing authority; the authenticated contract and
+its publisher lifetime obligations are required.
 
 ## Objective
 

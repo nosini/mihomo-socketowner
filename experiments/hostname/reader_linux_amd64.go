@@ -1,7 +1,8 @@
 package hostname
 
 // This exported facade serves the diagnostic reader and experimental Mihomo adapter.
-// It is not a stable service/map ABI and has no loader or operator entry point.
+// New consumers use the independent github.com/nosini/socketowner/hostname
+// module. This facade remains for historical experiment tests only.
 
 import (
 	"context"

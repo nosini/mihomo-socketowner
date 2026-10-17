@@ -80,7 +80,7 @@ func startAuthorityVMProcess(t *testing.T, role string, files []*os.File) *autho
 	h.cmd.Env = append(os.Environ(), "HOSTNAME_VM_AUTHORITY_ROLE="+role)
 	h.cmd.ExtraFiles = append([]*os.File{child}, files...)
 	h.cmd.Stdout, h.cmd.Stderr = &h.log, &h.log
-	if role == "reader" || role == "bootstrap-attacker" {
+	if role == "reader" || role == "contract-reader" || role == "bootstrap-attacker" {
 		h.cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 1000, Gid: 1000}}
 	}
 	err = h.cmd.Start()
@@ -136,6 +136,8 @@ func TestVMHostnameAuthorityHelper(t *testing.T) {
 		runAuthorityVMObserver(t, config, dec, enc)
 	} else if role == "reader" {
 		runAuthorityVMReader(t, config, dec, enc)
+	} else if role == "contract-reader" {
+		runContractVMReader(t, config, dec, enc)
 	} else if role == "bootstrap-attacker" {
 		runBootstrapVMAttacker(t, config, enc)
 	} else if role == "bootstrap-fake" {

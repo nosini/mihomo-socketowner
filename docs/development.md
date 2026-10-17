@@ -125,6 +125,19 @@ link/map replacement and in-process stop/restart. Independent-service authority,
 privilege separation and the routing deadline still require work before routing
 integration.
 
+## Optional hostname reader module
+
+`hostname/` is a separate Go module implementing [hostname contract v1](hostname-interface.md).
+Root `go test ./...` excludes it; also run `GOWORK=off go test -race ./...`
+and `GOWORK=off go vet ./...` from that directory. Its standalone license and
+release tags (`hostname/vX.Y.Z`) travel with the reader module. Ordinary loader
+builds have no dependency on it.
+
+Tagged hostname VM tests need a temporary workspace containing both modules
+(and Mihomo when compiling its helper in the same workspace). The public reader
+interoperability cases are `TestVMHostnameContract*`; Mihomo's optional build
+helper can compile its routing binary using only the reader module.
+
 ## Independent distribution
 
 Build and distribute the loader from this repository, including its license and
