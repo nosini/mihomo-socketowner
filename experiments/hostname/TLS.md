@@ -165,8 +165,19 @@ and out-of-order/interleaved responses with correct status/bodies. Named and
 ordinary-fallback connections retain their original ID/chain/destination through
 observer stop/restart and later streams; a fresh connection with a changed SNI
 selects RENAMED. Wrong pins send no HTTP/2 preface or request. This covers
-same-origin reuse on the controlled socket-BIO fixture, not browser coalescing
-across origins or general HTTP/2 conformance.
+same-origin and explicit cross-origin reuse on the controlled socket-BIO
+fixture, not automatic browser coalescing or general HTTP/2 conformance.
+
+Cross-origin cases map both reserved hostnames to the same fixture IP/port.
+`tls-authorize` uses [X509_check_host](https://docs.openssl.org/3.5/man3/X509_check_host/)
+against the already verified/pinned peer's DNS SANs before the harness builds any
+HEADERS. Existing named and fallback connections multiplex `route.invalid` and
+`reuse.invalid` with their original route; a fresh SNI of `reuse.invalid` selects
+RENAMED. Per-stream response headers echo the received authority for checking.
+The fixture refuses an uncovered hostname without advancing stream IDs, writing
+frames or delivering a request, then valid origins continue on the same socket.
+This is a client-side certificate policy check, not decrypted stream inspection
+by the observer or Mihomo. Routing remains fixed per transport connection.
 
 The harness creates ephemeral test certificates in its run directory. Trust is
 never added to the system store. Only the client and fixture server handle TLS

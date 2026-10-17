@@ -9,6 +9,7 @@
 #include <netinet/tcp.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/x509v3.h>
 #include <poll.h>
 #include <time.h>
 #include <pthread.h>
@@ -370,6 +371,16 @@ int main(int argc, char **argv)
 				c->verified = 1;
 				printf("tls-ready %d ok %s h2\n", i, SSL_get_version(c->ssl));
 			}
+		} else if (!strcmp(op, "tls-authorize")) {
+			char hostname[256];
+			check(c->verified && sscanf(line, "%*s %*d %255s", hostname) == 1, "verified origin");
+			X509 *peer = SSL_get1_peer_certificate(c->ssl);
+			check(peer != NULL, "origin certificate");
+			int match = X509_check_host(peer, hostname, 0,
+				X509_CHECK_FLAG_NEVER_CHECK_SUBJECT | X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS, NULL);
+			X509_free(peer);
+			check(match >= 0, "origin hostname check");
+			printf("tls-authorize %d %s\n", i, match == 1 ? "ok" : "hostname-failed");
 		} else if (!strcmp(op, "tls-send")) {
 			char hex[4097];
 			check(sscanf(line, "%*s %*d %4096s", hex) == 1, "application send");

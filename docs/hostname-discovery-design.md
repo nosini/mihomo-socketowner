@@ -445,6 +445,13 @@ Add this explicit scope boundary:
 A verified initial connection hostname remains useful metadata; it must not be
 presented as proof that every request on the connection uses that hostname.
 
+The controlled HTTP/2 fixture now verifies this boundary over TLS 1.2/1.3 in all
+four confined family/interception selections. DNS-SAN-covered additional origins
+share an existing named or fallback route; fresh TLS SNI selects a fresh rule.
+An uncovered origin is refused by the fixture client before frames are built,
+and the original connection remains usable. These explicit same-IP/port origin
+mappings do not establish browser DNS or automatic coalescing behavior.
+
 ### QUIC needs separate correlation
 
 A TLS session does not necessarily map one-to-one to a UDP socket. Multiple QUIC
@@ -677,8 +684,8 @@ key-share HelloRetryRequest also completes through confined IPv4/IPv6 TUN and
 local auto-redirect, preserving the committed connection and route through
 repeated exchanges and observer loss. Message counts distinguish the retry from
 a no-retry control; wrong pins still reject application traffic. Browser
-workloads, early data, cookie-only HRR and cross-origin reuse remain unproved.
-Controlled same-origin HTTP/2 multiplexing/reuse over TLS 1.2/1.3 is also verified
+workloads, early data, cookie-only HRR and automatic browser coalescing remain unproved.
+Controlled same/cross-origin HTTP/2 multiplexing/reuse over TLS 1.2/1.3 is also verified
 through both confined paths/families. Named and fallback connections retain
 their committed route through observer restart and later concurrent streams;
 fresh hostnames still select the appropriate rule. No per-stream hostname

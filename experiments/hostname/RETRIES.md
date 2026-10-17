@@ -81,8 +81,8 @@ REDIRECT and the [TUN system stack](TUN.md) are tested, including controlled
 needed for that resumption coverage. Controlled TLS 1.3 key-share
 HelloRetryRequest also completes through both confined paths with a stable
 committed route; it does not authorize another initial discovery window.
-Controlled same-origin HTTP/2 multiplexing and connection reuse also pass
+Controlled HTTP/2 multiplexing and same/cross-origin connection reuse also pass
 over TLS 1.2/1.3; these opaque application bytes cannot change a committed route.
-Browser TLS stacks, cross-origin coalescing, ECH, early data, cookie-only HRR, broader reinjection,
+Browser TLS stacks, automatic browser coalescing, ECH, early data, cookie-only HRR, broader reinjection,
 multiple initial records and production
 performance remain open.
