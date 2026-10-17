@@ -80,7 +80,9 @@ sudo /usr/local/bin/mihomo-hostname-observer cleanup
 ```
 
 Use the same `-runtime` and `-pin` for `run` and `cleanup` if you change them.
-The defaults are `/run/mihomo-hostname` and `/sys/fs/bpf/mihomo-hostname`. The
+The defaults are `/run/mihomo-hostname` and `/sys/fs/bpf/mihomo-hostname`.
+Without either flag, `cleanup` uses the paths recorded in an existing
+`-registration` file, so the service's stop command finds a registered run. The
 command needs root. Under systemd it reports readiness with `READY=1`, so a
 unit can use `Type=notify`; no unit or confinement policy is provided yet.
 

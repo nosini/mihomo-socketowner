@@ -145,6 +145,16 @@ func loadRegistration(path string) (observerRegistration, error) {
 	return reg, reg.Config.validate()
 }
 
+// RegisteredPaths returns the runtime and pin directories recorded for a
+// registered observer, so cleanup after its failure needs no matching flags.
+func RegisteredPaths(path string) (runtime, pins string, err error) {
+	reg, err := loadRegistration(path)
+	if err != nil {
+		return "", "", err
+	}
+	return reg.Config.Runtime, reg.Config.Pins, nil
+}
+
 // RunRegisteredObserver refuses stale registrations before attaching anything.
 // A new target, boot or PID namespace requires an explicit new PrepareObserver.
 func RunRegisteredObserver(ctx context.Context, path string, ready func()) error {

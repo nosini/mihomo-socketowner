@@ -68,7 +68,16 @@ func main() {
 	case "run-registered":
 		err = run(hostname.ObserverConfig{}, o.registration)
 	case "cleanup":
-		err = hostname.CleanupObserver(o.runtime, o.pin)
+		runtime, pins := o.runtime, o.pin
+		explicit := false
+		flag.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "runtime" || f.Name == "pin" })
+		// The service's ExecStopPost passes no paths; follow the registered run.
+		if !explicit {
+			if r, p, err := hostname.RegisteredPaths(o.registration); err == nil {
+				runtime, pins = r, p
+			}
+		}
+		err = hostname.CleanupObserver(runtime, pins)
 	default:
 		flag.Usage()
 		os.Exit(2)

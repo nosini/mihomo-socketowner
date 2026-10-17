@@ -433,4 +433,17 @@ func TestVMObserverRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.assertStopped()
+
+	// Like the service's ExecStopPost, cleanup gets no path flags after a
+	// crash; it must find the registered runtime and pins.
+	o = r.start()
+	o.cmd.Process.Kill()
+	o.wait(t)
+	if r.instance() == "" {
+		t.Fatal("crash pins disappeared before cleanup")
+	}
+	if status, log := r.finished("-registration", registration, "cleanup"); status != 0 {
+		t.Fatalf("registered cleanup: %d %s", status, log)
+	}
+	r.assertStopped()
 }
