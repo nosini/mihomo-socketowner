@@ -22,10 +22,10 @@ On Linux, mihomo can look up the process behind a connection in BPF maps instead
   process ID isn't mistaken for the owner. An iterator adds the processes that were already
   running. Only LSM hooks record, because the kernel skips a tracing program on a CPU where the
   same program was preempted, which would leave a forked process without a record.
-- The repository root builds `mihomo-sockowner` as an independent Go module using
-  cilium/ebpf. `mihomo-sockowner attach` loads the programs, attaches them to the root cgroup
+- The repository root builds `socketowner` as an independent Go module using
+  cilium/ebpf. `socketowner attach` loads the programs, attaches them to the root cgroup
   and pins the links in `/sys/fs/bpf/mihomo/links` and the map in
-  `/sys/fs/bpf/mihomo/maps/conn_owners`, then exits. `mihomo-sockowner detach` removes the
+  `/sys/fs/bpf/mihomo/maps/conn_owners`, then exits. `socketowner detach` removes the
   pins. It needs `CAP_BPF` and `CAP_NET_ADMIN`, plus `CAP_CHOWN` for `-reader-group`. With
   `-exec-paths` it also attaches the programs of `execpath.c` and pins their maps next to
   `conn_owners`. Those read kernel structures, relocated with the kernel's BTF, so they need
@@ -50,7 +50,7 @@ Go 1.25 or newer builds the loader. The embedded objects are checked in, so a no
 build needs no C compiler:
 
 ```sh
-CGO_ENABLED=0 go build -o mihomo-sockowner .
+CGO_ENABLED=0 go build -o socketowner .
 go test ./...
 ```
 
@@ -58,7 +58,7 @@ To regenerate the BPF objects after a C source change:
 
 ```sh
 go generate   # needs clang, llvm-strip and the libbpf headers
-CGO_ENABLED=0 go build -o mihomo-sockowner .
+CGO_ENABLED=0 go build -o socketowner .
 ```
 
 `go generate` rebuilds `sockowner_bpf*.o` and `execpath_bpf*.o`, which are committed so the

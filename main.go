@@ -1,4 +1,4 @@
-// Command mihomo-sockowner attaches the socket-owner BPF programs to a cgroup
+// Command socketowner attaches the socket-owner BPF programs to a cgroup
 // and pins them, so that mihomo can look up the process behind a connection
 // without holding BPF privileges itself. With -exec-paths it also records the
 // executable of every process, so mihomo needn't read /proc to name it.

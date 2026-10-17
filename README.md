@@ -6,15 +6,17 @@ A small privileged loader attaches the BPF programs and exits. mihomo reads the
 resulting maps without BPF capabilities. Records can outlive both the socket and
 the process, so short connections can still be identified.
 
-The loader is installed and updated separately from mihomo. Its executable stays
-named `mihomo-sockowner` for compatibility with existing deployments.
+The loader is installed and updated separately from mihomo. Before 2026-10-17 its
+executable was named `mihomo-sockowner`; installations using that name can switch
+by following the hardened-proxy-service update notes, or by detaching the old
+binary, removing it and installing this one.
 
 ## Installing and using
 
-Install a separately built `mihomo-sockowner` binary:
+Install a separately built `socketowner` binary:
 
 ```sh
-sudo install -m 755 mihomo-sockowner /usr/local/bin/mihomo-sockowner
+sudo install -m 755 socketowner /usr/local/bin/socketowner
 ```
 
 For a sandboxed systemd setup with a reader group, read-only map mounts and SELinux
@@ -25,7 +27,7 @@ separate prerequisite.
 To attach manually, with the existing `mihomo` group allowed to read the maps:
 
 ```sh
-sudo /usr/local/bin/mihomo-sockowner -reader-group mihomo -exec-paths attach
+sudo /usr/local/bin/socketowner -reader-group mihomo -exec-paths attach
 ```
 
 The default pin directory is `/sys/fs/bpf/mihomo`. `-pin` changes it; `-cgroup`
@@ -46,7 +48,7 @@ and map read permission; the systemd setup supplies both.
 To stop recording, after stopping dependent readers:
 
 ```sh
-sudo /usr/local/bin/mihomo-sockowner detach
+sudo /usr/local/bin/socketowner detach
 ```
 
 Use the same `-pin` for attach and detach if you changed it. Both commands preserve
