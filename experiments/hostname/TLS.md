@@ -28,10 +28,49 @@ For both IPv4 and IPv6, the matrix fixes TLS 1.2 or TLS 1.3 and checks:
 The [profile-3 extension](RETRIES.md) adds, for both TLS versions, a
 ClientHello larger than the historical 4 KiB limit and an exchange whose
 ClientHello needs real nonblocking retries. Each IP-family run therefore has
-eighteen TLS cases: twelve successful application exchanges and six deliberate
-certificate/hostname/pin rejections. It also reruns the service confinement,
+forty-one TLS connections: thirty-three successful application exchanges and
+eight deliberate certificate/hostname/pin rejections, including the TUN and
+resumption cases below. It also reruns the service confinement,
 missing/stale registration, kill-switch, restart, disable/re-enable and
 target-exit checks with SELinux enforcing.
+
+## TUN session resumption and SSL reuse
+
+The confined system-stack TUN matrix adds eleven connections for each TLS
+version and IP family. The server keeps one context and its ticket keys across
+connections. Both `SSL_session_reused` on the client and `session_reused` on the
+server must agree; offering a saved session alone does not count as resumption.
+
+| Case, for each TLS version | Expected handshake and route |
+| --- | --- |
+| Verified seed | Full handshake, NAMED |
+| Saved session on a new SSL object | Resumed, NAMED |
+| Two successive `SSL_clear` resets onto new TCP sockets | Resumed, NAMED; one connection exchanges three requests |
+| Reset with `reuse.invalid` and no saved session | Full handshake, RENAMED |
+| Reset with the name removed | Full handshake, ordinary DIRECT |
+| Reset back to `route.invalid` | Full handshake, NAMED |
+| Offer a ticket to a new server context | Ticket declined, full handshake, NAMED |
+| Resume with the observer stopped | Resumed, ordinary DIRECT |
+| Resume after a fresh observer restart | Resumed, NAMED |
+| Resume with a deliberately wrong certificate pin | Resumed, NAMED, no application request |
+
+Every socket has a fresh kernel cookie. Reset cases keep the same SSL object
+without freeing or reallocating it, replace its socket BIO, and explicitly clear
+its old session and name. The test checks the original destination and incoming
+SNI before application traffic, then verifies that the connection ID and chain
+stay fixed through each request/response. The no-name case cannot inherit a
+previous positive name. The second fixture hostname has its own domain rule,
+so a stale name would select the wrong chain.
+
+Sessions originate from a certificate/hostname-verified seed; the client
+checks the cached peer certificate's pin on each resumed connection. It uses
+no early data. Sessions and tickets stay in the fixture process's memory.
+Clean bidirectional TLS shutdown precedes saving or resetting a session:
+OpenSSL can invalidate a session after an unclean close, and TLS 1.3 tickets
+arrive after the initial handshake. See the upstream documentation for
+[session retrieval](https://docs.openssl.org/3.5/man3/SSL_get_session/),
+[SSL reset](https://docs.openssl.org/3.5/man3/SSL_clear/) and
+[shutdown](https://docs.openssl.org/3.5/man3/SSL_shutdown/).
 
 ## Fixture commands
 
@@ -51,13 +90,33 @@ five-second deadline for handshake completion, pin verification, request and
 response. Its nonblocking retries do not extend the deadline. The server stays
 open until the harness confirms that the connection ID and chain are unchanged.
 
+Additional completed-TLS commands are:
+
+```text
+session-state SLOT
+shutdown SLOT
+save-session SLOT
+resume SLOT
+reopen SLOT NAME|-
+```
+
+`session-state` reports only reused/resumable flags. `save-session` retains one
+reference to a resumable session; `resume` explicitly attaches it to an SSL
+object before ClientHello. `shutdown` completes the TLS close-notify exchange
+within a separate five-second deadline and half-closes TCP. `reopen` requires
+that clean shutdown, calls `SSL_clear`, clears the previous session and name,
+and binds the same SSL object to a new TCP socket. It does not imply resumption;
+use `resume` separately. All older commands keep their original behavior.
+
 The harness creates ephemeral test certificates in its run directory. Trust is
 never added to the system store. Only the client and fixture server handle TLS
 keys or application bytes; the observer and reader gain no such access.
 
 This proves completed TLS for the exact supported OpenSSL profile and controlled
-TCP REDIRECT path. It does not establish browser compatibility, encrypted DNS,
-ECH, resumption, HTTP workloads, other send shapes, TUN/TPROXY, throughput or a
+TCP REDIRECT and system-stack TUN paths. Resumption is tested with TLS tickets
+and the controlled OpenSSL socket-BIO fixture. It does not establish browser
+compatibility, encrypted DNS, ECH, early data, HelloRetryRequest, HTTP/2 or
+cross-origin reuse, other send shapes, TPROXY, throughput or a
 production latency budget. The observer admits only one initial ClientHello
 window and verified retries of its remaining bytes, as defined by
 [profile 3](../../hostname/PROFILE3.md); unsupported later sends revoke

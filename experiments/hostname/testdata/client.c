@@ -22,6 +22,9 @@
 
 struct connection { SSL *ssl; int fd; int used; char pin[65]; } connections[512];
 static SSL_CTX *ctx;
+// One explicitly retained in-memory session for the completed-TLS fixture.
+// No tickets, keys or session serialization are exposed to the observer.
+static SSL_SESSION *saved_session;
 static int family, port;
 static const char *address;
 static int source_port, tiny_send, any_source;
@@ -177,6 +180,21 @@ static void exchange(int i)
 	check(!memcmp(received, response, sizeof(received)), "TLS response bytes");
 	printf("exchange %d ok %s\n", i, SSL_get_version(c->ssl));
 }
+static void shutdown_tls(int i)
+{
+	struct connection *c = &connections[i];
+	int64_t deadline = monotonic_ms() + 5000;
+	int ret, error;
+	do {
+		ERR_clear_error();
+		ret = SSL_shutdown(c->ssl);
+		// Zero means close_notify was sent; the peer's reply is still due.
+		error = ret == 0 ? SSL_ERROR_WANT_READ : SSL_get_error(c->ssl, ret);
+	} while (ret != 1 && retry_tls(c, error, deadline));
+	check(ret == 1, "TLS shutdown");
+	check(shutdown(c->fd, SHUT_WR) == 0, "TCP shutdown");
+	printf("shutdown %d ok\n", i);
+}
 struct parallel_send { int slot, error; pthread_barrier_t *barrier; };
 static void *parallel_handshake(void *arg)
 {
@@ -271,6 +289,34 @@ int main(int argc, char **argv)
 			puts("ok");
 		} else if (!strcmp(op, "exchange")) {
 			exchange(i);
+		} else if (!strcmp(op, "shutdown")) {
+			shutdown_tls(i);
+		} else if (!strcmp(op, "session-state")) {
+			SSL_SESSION *session = SSL_get_session(c->ssl);
+			printf("session %d reused %d resumable %d\n", i,
+			       SSL_session_reused(c->ssl), session && SSL_SESSION_is_resumable(session));
+		} else if (!strcmp(op, "save-session")) {
+			SSL_SESSION *session = SSL_get1_session(c->ssl);
+			check(session && SSL_SESSION_is_resumable(session), "resumable session");
+			SSL_SESSION_free(saved_session);
+			saved_session = session;
+			puts("ok");
+		} else if (!strcmp(op, "resume")) {
+			check(saved_session && SSL_SESSION_is_resumable(saved_session), "saved session");
+			check(SSL_set_session(c->ssl, saved_session) == 1, "resume session");
+			puts("ok");
+		} else if (!strcmp(op, "reopen")) {
+			check(sscanf(line, "%*s %*d %511s", name) == 1, "reopen name");
+			check(SSL_get_shutdown(c->ssl) == (SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN), "clean previous TLS shutdown");
+			// Keep this exact SSL object, but explicitly discard its old session
+			// and name. Resumption, when requested, uses the separate command.
+			check(SSL_set_session(c->ssl, NULL) == 1 && SSL_clear(c->ssl) == 1, "clear SSL");
+			SSL_set_connect_state(c->ssl);
+			check(SSL_set_tlsext_host_name(c->ssl, strcmp(name, "-") ? name : NULL) == 1, "reopen hostname");
+			int fd = connect_socket();
+			check(SSL_set_fd(c->ssl, fd) == 1, "reopen descriptor");
+			close(c->fd); c->fd = fd;
+			report(i);
 		} else if (!strcmp(op, "handshake")) {
 			handshake(&i);
 		} else if (!strcmp(op, "cork-one") || !strcmp(op, "ack")) {
@@ -390,6 +436,7 @@ int main(int argc, char **argv)
 	for (int i = 0; i < 512; i++) {
 		if (connections[i].used) { SSL_free(connections[i].ssl); close(connections[i].fd); }
 	}
+	SSL_SESSION_free(saved_session);
 	SSL_CTX_free(ctx);
 	return 0;
 }

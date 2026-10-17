@@ -57,3 +57,9 @@ switches the real confined Mihomo service to the shipped TUN shape (system
 stack, auto-route, auto-detect-interface, device `Mihomo`) under the shipped
 kill switch and enforcing SELinux, and checks named routing, completed TLS 1.3
 and fallback with the observer stopped.
+
+The same service harness validates [TLS ticket resumption and SSL object
+reuse](TLS.md) for TLS 1.2/1.3 in both address families. New and reset SSL
+objects keep the expected route and real destination; a cleared name and a
+stopped observer use ordinary routing. Both peers confirm actual resumption,
+and repeated application exchanges retain the committed connection and chain.

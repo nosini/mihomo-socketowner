@@ -75,6 +75,9 @@ application bytes, selected route and original destination. Only its disposable
 network namespace has reduced receive buffers; this is test forcing, not a
 deployment setting.
 
-This remains one exact OpenSSL adapter, one target and TCP direct/local REDIRECT.
-Browser TLS stacks, ECH, TUN, broader reinjection, multiple initial records,
-HelloRetryRequest, session resumption and production performance remain open.
+This remains one exact OpenSSL adapter and one target. TCP direct/local
+REDIRECT and the [TUN system stack](TUN.md) are tested, including controlled
+[TLS ticket resumption and SSL reuse](TLS.md). No adapter or profile change was
+needed for that resumption coverage. Browser TLS stacks, ECH, early data,
+broader reinjection, multiple initial records, HelloRetryRequest and production
+performance remain open.

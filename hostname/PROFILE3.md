@@ -101,3 +101,9 @@ browser/NSS support, ECH-inner names, HelloRetryRequest handling or general
 later-write attribution.
 See [retry validation](../experiments/hostname/RETRIES.md) for frame paths and
 tests, including real short writes and completed TLS through confined services.
+
+Controlled [TLS ticket resumption and SSL reuse](../experiments/hostname/TLS.md)
+pass through the confined TUN service for TLS 1.2/1.3 and IPv4/IPv6 without any
+profile or adapter change. This covers new SSL objects and `SSL_clear` onto new
+socket lifetimes, including changed/removed names and ordinary fallback. It
+does not establish early-data, HelloRetryRequest or cross-origin reuse support.
