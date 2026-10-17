@@ -2,8 +2,8 @@ package hostname
 
 // Resident observer for the experimental first-send profile. It performs the
 // same initialization as the VM helpers for one explicit target process and
-// serves the bootstrap endpoint until stopped. Its maps and endpoint remain
-// the diagnostic experiment's, not a stable public ABI.
+// serves the authenticated v1/profile-1 bootstrap until stopped. Raw diagnostic
+// maps alone are never routing authority.
 
 //go:generate sh -c "clang -O2 -g -Wall -Werror -D__TARGET_ARCH_x86 -target bpfel -mcpu=v3 -c bpf/send.c -o observer_bpfel.o && llvm-strip -g observer_bpfel.o"
 
@@ -276,7 +276,11 @@ func (o *residentObserver) healthy() error {
 // runs once readers can connect. Any remains of a crashed instance are
 // recovered first. Shutdown revokes readers before detaching; a nil result
 // means the stop was requested or the target exited.
-func RunObserver(ctx context.Context, c ObserverConfig, ready func()) (err error) {
+func RunObserver(ctx context.Context, c ObserverConfig, ready func()) error {
+	return runObserver(ctx, c, nil, ready)
+}
+
+func runObserver(ctx context.Context, c ObserverConfig, expected *registeredTarget, ready func()) (err error) {
 	if err := c.validate(); err != nil {
 		return err
 	}
@@ -289,6 +293,12 @@ func RunObserver(ctx context.Context, c ObserverConfig, ready func()) (err error
 		return fmt.Errorf("open target: %w", err)
 	}
 	defer unix.Close(target)
+	if expected != nil {
+		got, err := targetIdentity(target)
+		if err != nil || got != *expected {
+			return errors.New("registered target identity changed; prepare the target again")
+		}
+	}
 	if err := targetInCgroup(c.TargetPID, c.Cgroup); err != nil {
 		return err
 	}

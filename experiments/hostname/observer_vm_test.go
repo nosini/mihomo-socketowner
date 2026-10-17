@@ -4,6 +4,7 @@ package hostname
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -28,14 +29,18 @@ type observerVMCommand struct {
 }
 
 type observerVMRun struct {
-	t      *testing.T
-	f      *fixture
-	binary string
-	root   string
-	pins   string
+	t            *testing.T
+	f            *fixture
+	binary       string
+	registration string
+	root         string
+	pins         string
 }
 
 func (r *observerVMRun) args(command string, pid int, ssl string) []string {
+	if command == "run" && r.registration != "" {
+		return []string{"-registration", r.registration, "run-registered"}
+	}
 	return []string{"-runtime", r.root, "-pin", r.pins, "-cgroup", r.f.cgroup, "-target-pid", strconv.Itoa(pid),
 		"-profile", ObserverProfile, "-libssl", ssl, "-libcrypto", r.f.cryptoPath, "-libc", profileLibc,
 		"-reader-user", "1000", "-reader-group", "1000", command}
@@ -348,4 +353,85 @@ func TestVMObserverCommandGuardExhaustion(t *testing.T) {
 	r.assertStopped()
 	r.start()
 	r.connect().named(t)
+}
+
+func TestVMObserverRegistration(t *testing.T) {
+	r := newObserverVMRun(t)
+	registration := filepath.Join(r.root, "target", "target.json")
+	args := append([]string{"-registration", registration}, r.args("prepare", int(r.f.pid), r.f.sslPath)...)
+	if status, log := r.finished(args...); status != 0 {
+		t.Fatalf("prepare: %d %s", status, log)
+	}
+	original, err := os.ReadFile(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := loadRegistration(registration)
+	if err != nil || reg.Config.TargetPID != int(r.f.pid) {
+		t.Fatalf("registration: %+v %v", reg, err)
+	}
+	for name, change := range map[string]func(*observerRegistration){
+		"boot":         func(v *observerRegistration) { v.Target.Boot += "x" },
+		"pidns":        func(v *observerRegistration) { v.Target.PIDNS++ },
+		"pidfs-device": func(v *observerRegistration) { v.Target.Dev++ },
+		"pidfs-inode":  func(v *observerRegistration) { v.Target.Inode++ },
+		"version":      func(v *observerRegistration) { v.Version++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := reg
+			change(&v)
+			data, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(registration, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if status, log := r.finished("-registration", registration, "run-registered"); status != 1 {
+				t.Fatalf("stale registration: %d %s", status, log)
+			}
+			r.assertStopped()
+		})
+	}
+	for _, data := range [][]byte{[]byte("{}"), append(append([]byte(nil), original...), []byte(" {}")...), []byte(strings.Repeat(" ", 17000))} {
+		if err := os.WriteFile(registration, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadRegistration(registration); err == nil {
+			t.Fatal("invalid registration accepted")
+		}
+	}
+	if err := os.WriteFile(registration, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(registration, 0644)
+	if _, err := loadRegistration(registration); err == nil {
+		t.Fatal("nonprivate registration accepted")
+	}
+	os.Chmod(registration, 0600)
+	symlink := filepath.Join(r.root, "target", "symlink")
+	if err := os.Symlink(registration, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadRegistration(symlink); err == nil {
+		t.Fatal("symlink registration accepted")
+	}
+	// An explicitly registered birth can run repeatedly while that target lives.
+	r.registration = registration
+	o := r.start()
+	a := r.connect()
+	_, key := a.named(t)
+	o.cmd.Process.Signal(syscall.SIGTERM)
+	if err := o.wait(t); err != nil {
+		t.Fatal(err)
+	}
+	assertAuthorityUnknown(t, a.reader, key)
+	r.assertStopped()
+	o = r.start()
+	r.connect().named(t)
+	o.cmd.Process.Signal(syscall.SIGTERM)
+	if err := o.wait(t); err != nil {
+		t.Fatal(err)
+	}
+	r.assertStopped()
 }

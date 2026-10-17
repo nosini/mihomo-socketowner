@@ -8,6 +8,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"golang.org/x/sys/unix"
 )
 
 var errObserverUnavailable = errors.New("hostname observer session is unavailable")
@@ -107,7 +108,17 @@ func newObserverSession(p *probe) (_ *observerSession, err error) {
 		}
 		// Keep this kernel link identity alive even if its owner's original
 		// FD is unexpectedly closed. ID reuse cannot authorize a new link.
-		l.lease, err = link.NewFromID(l.info.ID)
+		// Duplicate the link we already own. Reopening a global link ID
+		// requires CAP_SYS_ADMIN even when loading/attaching did not.
+		owned, ok := l.get().(interface{ FD() int })
+		if !ok || owned.FD() < 0 {
+			return nil, fmt.Errorf("observer %s link has no owned FD", l.name)
+		}
+		fd, e := unix.FcntlInt(uintptr(owned.FD()), unix.F_DUPFD_CLOEXEC, 0)
+		if e != nil {
+			return nil, e
+		}
+		l.lease, err = link.NewFromFD(fd) // consumes the duplicate, including on failure
 		if err != nil {
 			return nil, err
 		}

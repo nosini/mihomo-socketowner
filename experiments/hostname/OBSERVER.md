@@ -79,6 +79,24 @@ The defaults are `/run/mihomo-hostname` and `/sys/fs/bpf/mihomo-hostname`. The
 command needs root. Under systemd it reports readiness with `READY=1`, so a
 unit can use `Type=notify`; no unit or confinement policy is provided yet.
 
+## Registering a service target
+
+The optional hardened-service unit reads a root-private registration rather than
+reinterpreting a numeric PID on each restart. With the same explicit target,
+cgroup, profile, library and reader flags as `run`, use `prepare` to validate and
+write `/run/mihomo-hostname-target/target.json`. `-registration` selects another
+canonical path in a root-owned mode-0700 directory for development. Preparation
+hashes/maps the libraries and records boot ID, PID namespace and pidfs target
+birth identity; it loads no BPF.
+
+The service invokes `run-registered`, which reads that bounded mode-0600 file and
+checks the original process identity before attachment. A new boot, PID namespace
+or process birth requires explicit preparation again. Restarts may observe the
+same still-living target with fresh maps, but never a recycled numeric PID.
+All original mapping/hash/liveness checks also run on registered startup.
+`run` with explicit arguments remains available for manual experiments.
+The service registration is local control state, not a new reader wire format.
+
 ## When it stops
 
 | Event | What the observer does | Exit status |
@@ -142,8 +160,9 @@ test binaries built with the race detector:
 
 ## Not done yet
 
-- A systemd unit, sandboxing, capabilities and SELinux policy, planned for
-  hardened-proxy-service. The command currently runs as full root.
+- Wider operational/platform validation of the optional hardened-service unit
+  and policy. Manual `run` outside that unit still uses the invoking root process
+  privileges; the service has a separate restricted domain and capability set.
 - Finding targets by itself. One observer follows one PID; a different
   OpenSSL build, Flatpak runtime or statically linked program is unsupported.
 - Reclaiming send guards without a restart.

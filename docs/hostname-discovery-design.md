@@ -6,8 +6,8 @@ Design and implementation record for optional application hostname discovery.
 | --- | --- |
 | Prepared | 2026-10-14 |
 | Project status | Milestone 1 in progress; experiment authorized and started 2026-10-16 |
-| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module |
-| Work not completed | Broader send/reinjection coverage; service unit/confinement; full TLS/browser workloads |
+| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration |
+| Work not completed | Broader send/reinjection coverage; full TLS/browser workloads and production measurements |
 | Intended reader | An agent returning to this workspace without the original conversation |
 
 This document preserves the user's objective and the resulting assessment. The
@@ -140,8 +140,11 @@ The normal Mihomo module graph remains independent; an explicit build helper
 accepts a released reader version or a local reader checkout. No release has been
 published yet.
 
-Milestone 1 remains open for broader send coverage and reinjection. Service
-confinement and operational integration remain unimplemented. Raw diagnostic
+The optional [hardened-service integration](../../hardened-proxy-service/docs/hostname-discovery.md)
+adds boot-bound target registration, an independently confined observer service
+and an optional endpoint mount without increasing Mihomo capabilities.
+Milestone 1 remains open for broader send coverage and reinjection; production
+operational validation and full TLS/browser workloads remain future work. Raw diagnostic
 maps alone are never a public routing authority; the authenticated contract and
 its publisher lifetime obligations are required.
 
