@@ -29,7 +29,9 @@ Mihomo performs preprocessing, sniffing and rule matching on tentative metadata.
 **After matching and before the main outbound dial**, confirmation rereads the
 same flow through the same reader. The check includes current peer liveness,
 the irreversible authority gate, frozen map identities, publication stability,
-the socket send/lifetime guard, exact record equality and the original deadline.
+the socket send/lifetime guard, an unchanged socket cookie and observation and
+the original deadline. Profile 3 no longer requires the per-packet fields to
+match, because later segments of the same window rewrite them.
 A reconnect cannot change a candidate's reader or replace it with a new instance.
 There is no positive authority lease or cached health check.
 

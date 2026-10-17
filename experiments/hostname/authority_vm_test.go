@@ -41,7 +41,7 @@ type authorityVMReply struct {
 	Manifest                   authorityManifest
 	Name, Error                string
 	Cookie                     uint64
-	Unknown                    bool
+	Unknown, NoFlow            bool
 	Copied                     bool
 	State                      uint64
 	Directory, Endpoint, Phase string

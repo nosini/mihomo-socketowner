@@ -55,6 +55,21 @@ diagnostic flow record retained across exclusion cannot authorize routing:
 readers independently check the guard and publication state at lookup and again
 at route commitment.
 
+## Reader lookup and validation
+
+Every egress segment of the window rewrites the flow record's per-packet fields
+(TCP sequence, payload length and packet timestamp, offsets 296..311), and a
+retried window can still be emitting segments between lookup and route
+commitment. Profile-3 `Candidate.Validate` therefore repeats the full guarded
+read but requires only the cookie and the complete original observation
+(offsets 0..295) to be unchanged. A changed name, another socket at the flow key,
+an empty observation from a later packet or an excluded guard still fails.
+
+The SYN publishes an unnamed record before the proxy can accept the connection.
+A lookup that finds no record for the flow returns `ErrNoFlow` (which wraps
+`ErrUnavailable`): the connection was not opened by the observed process, or its
+record was evicted. Callers should return unknown immediately rather than wait.
+
 ## Private storage and retirement
 
 Small socket storage retains readiness and the profile-2 callback lease word.

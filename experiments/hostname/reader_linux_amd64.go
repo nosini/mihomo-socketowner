@@ -84,7 +84,9 @@ func (c *Candidate) Validate() error {
 	if err != nil {
 		return err
 	}
-	if current != c.record || !time.Now().Before(c.deadline) {
+	// Emitting later segments of the same immutable window advances only the
+	// per-packet fields. The socket and its original observation must not change.
+	if current.Cookie != c.record.Cookie || current.Observation != c.record.Observation || !time.Now().Before(c.deadline) {
 		return errors.New("changed or expired hostname candidate")
 	}
 	return nil

@@ -58,9 +58,11 @@ idempotent `Close`; closing invalidates all candidates. `Name` remains tentative
 text after invalidation and never substitutes for `Validate`.
 
 Any error requires fallback. Error text is diagnostic, not a protocol or API
-classification. `ErrUnavailable` identifies revoked or unsupported sessions;
-other errors may identify missing records, busy publication, expiry or invalid
-inputs. A successful validation is a commitment point, not an atomic lease
+classification. `ErrUnavailable` identifies revoked or unsupported sessions.
+`ErrNoFlow` (which also matches `ErrUnavailable`) means the observer has no
+record of the flow, usually because another process opened it; polling again
+for that connection is pointless. Other errors may identify a record without a
+name yet, busy publication, expiry or invalid inputs. A successful validation is a commitment point, not an atomic lease
 through network dial or TLS. The caller owns its configuration cancellation,
 routing deadline, concurrency bound and prompt descriptor cleanup.
 

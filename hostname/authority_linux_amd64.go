@@ -1,6 +1,7 @@
 package hostname
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -123,7 +124,11 @@ func (r *authorityReader) healthy() error {
 
 func (r *authorityReader) lookup(key flowKey) (flowObservation, error) {
 	return r.read(func(value *flowObservation) error {
-		return r.maps[3].Lookup(key, value)
+		err := r.maps[3].Lookup(key, value)
+		if errors.Is(err, ebpf.ErrKeyNotExist) {
+			return ErrNoFlow
+		}
+		return err
 	})
 }
 

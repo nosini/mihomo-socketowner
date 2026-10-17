@@ -5,6 +5,9 @@ package hostname
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -68,7 +71,7 @@ func runContractVMReader(t *testing.T, config authorityVMConfig, dec *json.Decod
 			t.Fatal("invalid contract reader command")
 		}
 		if err != nil {
-			reply.Unknown, reply.Error = true, err.Error()
+			reply.Unknown, reply.NoFlow, reply.Error = true, errors.Is(err, H.ErrNoFlow), err.Error()
 		}
 		if err := enc.Encode(reply); err != nil {
 			t.Fatal(err)
@@ -129,6 +132,103 @@ func TestVMHostnameContract(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Only a flow without any record is reported as unobserved. An observed socket
+// has its SYN record before the proxy accepts, even before its first send.
+func TestVMHostnameContractUnobservedFlow(t *testing.T) {
+	for _, network := range []string{"tcp4", "tcp6"} {
+		t.Run(network, func(t *testing.T) {
+			root, pins := bootstrapVMRoot(t)
+			f := newFixtureSetup(t, network, true, "", false)
+			_, ready := bootstrapVMEpoch(t, f, root, pins, "")
+			c := f.accepted(f.command("open pending.test name-first fd"))
+			h := startAuthorityVMProcess(t, "contract-reader", nil)
+			if reply := h.exchange(t, authorityVMConfig{Endpoint: ready.Endpoint}); reply.Unknown {
+				t.Fatal(reply)
+			}
+			key := f.flowKey(c)
+			if reply := h.exchange(t, authorityVMRequest{Command: "lookup", Key: key}); !reply.Unknown || reply.NoFlow {
+				t.Fatalf("observed socket before its first send: %+v", reply)
+			}
+			key.SourcePort ^= 1
+			if reply := h.exchange(t, authorityVMRequest{Command: "lookup", Key: key}); !reply.Unknown || !reply.NoFlow {
+				t.Fatalf("flow without a record: %+v", reply)
+			}
+		})
+	}
+}
+
+// Window-limited ClientHello segments rewrite the flow record's packet fields
+// between Lookup and Validate. Only a changed observation may fail validation.
+func TestVMHostnameContractRetriedWindow(t *testing.T) {
+	for _, network := range []string{"tcp4", "tcp6"} {
+		for _, change := range []string{"unchanged", "rename"} {
+			t.Run(network+"/"+change, func(t *testing.T) {
+				root, pins := bootstrapVMRoot(t)
+				f := newFixtureSetup(t, network, true, "", false)
+				_, ready := bootstrapVMEpoch(t, f, root, pins, "")
+				smallReceiveWindow(t, f)
+				c := f.accepted(f.command("open retry-window.test fd-first fd"))
+				f.command("retry-alpn %d", c.slot)
+				if hello := f.command("handshake %d", c.slot); hello != fmt.Sprintf("handshake %d -1 3", c.slot) {
+					t.Fatalf("ClientHello did not stop on a pending write: %s", hello)
+				}
+				h := startAuthorityVMProcess(t, "contract-reader", nil)
+				if reply := h.exchange(t, authorityVMConfig{Endpoint: ready.Endpoint}); reply.Unknown {
+					t.Fatal(reply)
+				}
+				if reply := h.exchange(t, authorityVMRequest{Command: "lookup", Key: f.flowKey(c)}); reply.Unknown || reply.Name != "retry-window.test" {
+					t.Fatal(reply)
+				}
+				if change == "rename" {
+					f.command("rename %d other-window.test", c.slot)
+				}
+				// Like the proxy before route commitment, read the whole record
+				// without replying: the client's ACK of a reply would republish
+				// the flow without a name, which is correct but not this case.
+				drainClientHello(t, f, c)
+				reply := h.exchange(t, authorityVMRequest{Command: "validate"})
+				if change == "unchanged" && reply.Unknown {
+					t.Fatalf("remaining window segments invalidated the candidate: %+v", reply)
+				}
+				if change == "rename" && !reply.Unknown {
+					t.Fatal("renamed retry validated the original candidate")
+				}
+			})
+		}
+	}
+}
+
+// drainClientHello reads one complete TLS record while the client retries its
+// pending write, sending nothing back.
+func drainClientHello(t *testing.T, f *fixture, c connection) {
+	t.Helper()
+	done := make(chan error, 1)
+	c.server.SetReadDeadline(time.Now().Add(3 * time.Second))
+	go func() {
+		header := make([]byte, 5)
+		if _, err := io.ReadFull(c.server, header); err != nil {
+			done <- err
+			return
+		}
+		_, err := io.ReadFull(c.server, make([]byte, int(header[3])<<8|int(header[4])))
+		done <- err
+	}()
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		f.command("handshake %d", c.slot)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("incomplete ClientHello record: %v", err)
+			}
+			return
+		default:
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("pending ClientHello did not complete")
 }
 
 func TestVMHostnameContractBadPublisher(t *testing.T) {
