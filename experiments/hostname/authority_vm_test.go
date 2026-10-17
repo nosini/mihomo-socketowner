@@ -208,7 +208,10 @@ func runAuthorityVMObserver(t *testing.T, config authorityVMConfig, dec *json.De
 			t.Fatal(err)
 		}
 		defer ownedReader.close()
-		if err := owner.publish(p, ownedReader, 1000, 1000); err != nil {
+		// Retain the server's reason when a reader sees only bootstrap EOF.
+		// startAuthorityVMProcess includes this stderr when a case fails.
+		reportBootstrapError := func(err error) { fmt.Fprintf(os.Stderr, "hostname bootstrap rejected: %v\n", err) }
+		if err := owner.publish(p, ownedReader, 1000, 1000, reportBootstrapError); err != nil {
 			t.Fatal(err)
 		}
 		reply.Endpoint = owner.socketPath()

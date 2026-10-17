@@ -334,7 +334,7 @@ func runObserver(ctx context.Context, c ObserverConfig, expected *registeredTarg
 	if o.reader, err = ownAuthorityReader(directory, manifest); err != nil {
 		return err
 	}
-	if err := owner.publish(o.probe, o.reader, c.ReaderUID, c.ReaderGID); err != nil {
+	if err := owner.publish(o.probe, o.reader, c.ReaderUID, c.ReaderGID, nil); err != nil {
 		return err
 	}
 	if ready != nil {

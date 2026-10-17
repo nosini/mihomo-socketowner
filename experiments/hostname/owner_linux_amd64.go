@@ -338,7 +338,9 @@ func (o *bootstrapOwner) removeJournalTemporary() error {
 	return os.Remove(path)
 }
 
-func (o *bootstrapOwner) publish(p *probe, r *authorityReader, uid, gid uint32) error {
+// reportError runs synchronously after a failed handshake. The resident observer
+// leaves it nil; VM fixtures retain the reason alongside child-process failures.
+func (o *bootstrapOwner) publish(p *probe, r *authorityReader, uid, gid uint32, reportError func(error)) error {
 	if p == nil || p.session == nil || r == nil || o.journal == nil || o.journal.Ready || o.journal.PID != os.Getpid() || r.pidstat.Dev != o.journal.Dev || r.pidstat.Ino != o.journal.Inode {
 		return errors.New("hostname publisher is not the journal owner")
 	}
@@ -406,7 +408,9 @@ func (o *bootstrapOwner) publish(p *probe, r *authorityReader, uid, gid uint32) 
 				return
 			}
 			// One bounded handshake at a time, with no unbounded goroutine/FD queue.
-			_ = serveBootstrap(c, uid, id, r, time.Now().Add(200*time.Millisecond))
+			if err := serveBootstrap(c, uid, id, r, time.Now().Add(200*time.Millisecond)); err != nil && reportError != nil {
+				reportError(err)
+			}
 		}
 	}()
 	return nil

@@ -38,6 +38,12 @@ VM harness also offers `--interrupt-recovery-poll` to inject the first poll
 interruption after automatic observer recovery and require named routing on
 that first connection.
 
+The VM observer fixture retains bootstrap-server rejection reasons in its
+stderr, included when a supervised case fails. A reader-side EOF alone cannot
+distinguish a rejected envelope, expired handshake or failed authority check.
+The resident observer keeps its existing error handling; no per-client
+production logging is enabled. Keep failing logs when a later repetition passes.
+
 The module is released independently with a subdirectory-prefixed Git tag, for
 example `hostname/v0.1.0`, rather than a loader release tag. The initial Go API is
 staged for that first release; the documented v1 wire/profile semantics must not
