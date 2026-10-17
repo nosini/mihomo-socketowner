@@ -59,6 +59,22 @@ func newFixtureObject(t *testing.T, network string, liveSend bool, override stri
 
 func newFixtureSetup(t *testing.T, network string, liveSend bool, override string, attachHere bool) *fixture {
 	t.Helper()
+	addr := "127.0.0.1"
+	if network == "tcp6" {
+		addr = "::1"
+	}
+	l, err := net.ListenTCP(network, &net.TCPAddr{IP: net.ParseIP(addr)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	return newFixtureListener(t, network, liveSend, override, attachHere, l)
+}
+
+// newFixtureListener starts the client against an existing server listener,
+// such as one in another network namespace.
+func newFixtureListener(t *testing.T, network string, liveSend bool, override string, attachHere bool, l *net.TCPListener) *fixture {
+	t.Helper()
 	object, client := os.Getenv("HOSTNAME_VM_OBJECT"), os.Getenv("HOSTNAME_VM_CLIENT")
 	if liveSend {
 		object = os.Getenv("HOSTNAME_VM_SEND_OBJECT")
@@ -80,15 +96,10 @@ func newFixtureSetup(t *testing.T, network string, liveSend bool, override strin
 	if err != nil || init == self {
 		t.Fatal("run under unshare --net with loopback up")
 	}
-	addr, family := "127.0.0.1", "4"
+	addr, family := l.Addr().(*net.TCPAddr).IP.String(), "4"
 	if network == "tcp6" {
-		addr, family = "::1", "6"
+		family = "6"
 	}
-	l, err := net.ListenTCP(network, &net.TCPAddr{IP: net.ParseIP(addr)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { l.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, client, family, addr, strconv.Itoa(l.Addr().(*net.TCPAddr).Port))

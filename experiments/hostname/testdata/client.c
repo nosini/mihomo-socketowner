@@ -24,7 +24,7 @@ struct connection { SSL *ssl; int fd; int used; char pin[65]; } connections[512]
 static SSL_CTX *ctx;
 static int family, port;
 static const char *address;
-static int source_port, tiny_send;
+static int source_port, tiny_send, any_source;
 static char destination[64];
 static uintptr_t last_freed_ssl;
 static unsigned int reused_objects;
@@ -43,11 +43,14 @@ static int connect_socket(void)
 	int one = 1;
 	check(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == 0, "reuse address");
 	{ // Keep the source address identical when forcing redirect collisions.
+		// A routed (TUN) destination needs the source its route selects.
 		if (family == AF_INET) {
-			struct sockaddr_in local = {.sin_family = AF_INET, .sin_port = htons(source_port), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+			struct sockaddr_in local = {.sin_family = AF_INET, .sin_port = htons(source_port),
+				.sin_addr.s_addr = htonl(any_source ? INADDR_ANY : INADDR_LOOPBACK)};
 			check(bind(fd, (void *)&local, sizeof(local)) == 0, "bind source");
 		} else {
-			struct sockaddr_in6 local = {.sin6_family = AF_INET6, .sin6_port = htons(source_port), .sin6_addr = IN6ADDR_LOOPBACK_INIT};
+			struct sockaddr_in6 local = {.sin6_family = AF_INET6, .sin6_port = htons(source_port),
+				.sin6_addr = any_source ? in6addr_any : in6addr_loopback};
 			check(bind(fd, (void *)&local, sizeof(local)) == 0, "bind source");
 		}
 	}
@@ -216,6 +219,10 @@ int main(int argc, char **argv)
 		check(sscanf(line, "%31s", op) == 1, "command");
 		if (!strcmp(op, "tiny-send") || !strcmp(op, "normal-send")) {
 			tiny_send = !strcmp(op, "tiny-send");
+			puts("ok"); continue;
+		}
+		if (!strcmp(op, "any-source")) {
+			any_source = 1;
 			puts("ok"); continue;
 		}
 		if (!strcmp(op, "source")) {

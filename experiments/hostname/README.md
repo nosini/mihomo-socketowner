@@ -25,6 +25,8 @@ Later steps separate the [observer and reader](AUTHORITY.md), authenticate the
 [bootstrap](BOOTSTRAP.md) and connect it to Mihomo's [native lookup](NATIVE.md).
 To run the observer for Mihomo, use the [observer command](OBSERVER.md).
 
+Native lookup also covers Mihomo's [TUN system stack](TUN.md) for TCP.
+
 The current [profile-3 retry follow-up](RETRIES.md) admits one complete initial
 ClientHello record up to 16 KiB and verified retries of its remaining bytes on
 the same live SSL connection. Final-release reclamation bounds retained sockets

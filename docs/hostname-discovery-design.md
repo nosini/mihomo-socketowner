@@ -6,7 +6,7 @@ Design and implementation record for optional application hostname discovery.
 | --- | --- |
 | Prepared | 2026-10-14 |
 | Project status | Milestone 1 in progress; experiment authorized and started 2026-10-16 |
-| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration; controlled completed TLS; final-release guard reclamation; larger initial ClientHellos and verified retries |
+| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration; controlled completed TLS; final-release guard reclamation; larger initial ClientHellos and verified retries; TUN system-stack lookup |
 | Work not completed | Broader send/reinjection coverage; browser workloads and production measurements |
 | Intended reader | An agent returning to this workspace without the original conversation |
 
@@ -658,3 +658,11 @@ exclude the socket. Historical profile-1/profile-2 contracts remain frozen;
 upgrade both bootstrap peers together. Large and actual short-write TLS 1.2/1.3
 exchanges pass through the confined services for both address families. This
 does not add browser TLS adapters, ECH-inner names or new interception modes.
+
+The [TUN follow-up](../experiments/hostname/TUN.md) extends native lookup to
+Mihomo's TUN `system`/`mixed` stack for TCP. The flow key is the stack's
+original tuple in the namespace of its accepted kernel socket, which equals the
+application socket's egress key when the application shares the device's
+namespace. `auto-redirect`, the `gvisor` stack, other namespaces, TPROXY and UDP
+stay unknown. Direct VM tests and the confined service with the shipped TUN
+configuration pass for both address families.

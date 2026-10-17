@@ -47,6 +47,18 @@ func newRouteVMHelper(t *testing.T, network string, budget int, processMode, pol
 
 func newRouteVMHelperEndpoint(t *testing.T, network string, budget int, processMode, policy, endpoint string) *routeVMHelper {
 	t.Helper()
+	return startRouteVMHelper(t, network, budget, processMode, policy, endpoint, "")
+}
+
+// newRouteVMHelperTUN runs the native helper with a TUN system-stack inbound on
+// device. Like the hardened service, it keeps only ambient CAP_NET_ADMIN.
+func newRouteVMHelperTUN(t *testing.T, network string, budget int, endpoint, device string) *routeVMHelper {
+	t.Helper()
+	return startRouteVMHelper(t, network, budget, "off", "", endpoint, device)
+}
+
+func startRouteVMHelper(t *testing.T, network string, budget int, processMode, policy, endpoint, device string) *routeVMHelper {
+	t.Helper()
 	path := os.Getenv("HOSTNAME_VM_MIHOMO")
 	if path == "" {
 		t.Skip("set HOSTNAME_VM_MIHOMO to Mihomo's hostname_vm tunnel test binary")
@@ -73,6 +85,10 @@ func newRouteVMHelperEndpoint(t *testing.T, network string, budget int, processM
 	if endpoint != "" {
 		h.cmd.Env = append(h.cmd.Env, "HOSTNAME_VM_ROUTE_ENDPOINT="+endpoint)
 		h.cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 1000, Gid: 1000}}
+		if device != "" {
+			h.cmd.Env = append(h.cmd.Env, "HOSTNAME_VM_ROUTE_TUN="+device)
+			h.cmd.SysProcAttr.AmbientCaps = []uintptr{unix.CAP_NET_ADMIN}
+		}
 	}
 	h.cmd.ExtraFiles = []*os.File{child}
 	h.cmd.Stdout, h.cmd.Stderr = &h.log, &h.log
