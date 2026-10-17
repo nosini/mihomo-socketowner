@@ -107,4 +107,4 @@ Build and distribute the loader from this repository, including its license and
 the corresponding BPF sources. Do not add it to mihomo's build or release scripts.
 Deployments install or update this binary explicitly, then restart its service.
 Service units, SELinux policy and reader-group setup belong to
-[hardened-mihomo-service](https://github.com/nosini/hardened-mihomo-service).
+[hardened-proxy-service](https://github.com/nosini/hardened-proxy-service).

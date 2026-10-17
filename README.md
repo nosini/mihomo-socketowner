@@ -18,7 +18,7 @@ sudo install -m 755 mihomo-sockowner /usr/local/bin/mihomo-sockowner
 ```
 
 For a sandboxed systemd setup with a reader group, read-only map mounts and SELinux
-policy, follow [hardened-mihomo-service](https://github.com/nosini/hardened-mihomo-service#process-lookup).
+policy, follow [hardened-proxy-service](https://github.com/nosini/hardened-proxy-service#process-lookup).
 That repository owns the service units and policy; it uses this loader as a
 separate prerequisite.
 
