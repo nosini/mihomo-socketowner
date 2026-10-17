@@ -19,9 +19,11 @@ import (
 // Offsets were checked against the getters and BIO_s_socket in these exact
 // x86-64 ELF files. A version string alone does not establish layout identity.
 const (
-	sslSHA256       = "2dead83fbc10ddfbc6240921ebe691995df7753e1a11319de923534e4c992064"
-	cryptoSHA256    = "f1b2c9b4070ea2724480a3f0d65e0f80b5d5665782e0de18e7190a0348f33c0b"
-	libcSHA256      = "090f858814642a3f28e5f4ae6499667e7901e47902ca3e72fb9c8a1967a3b8df"
+	sslSHA256    = "2dead83fbc10ddfbc6240921ebe691995df7753e1a11319de923534e4c992064"
+	cryptoSHA256 = "f1b2c9b4070ea2724480a3f0d65e0f80b5d5665782e0de18e7190a0348f33c0b"
+	libcSHA256   = "090f858814642a3f28e5f4ae6499667e7901e47902ca3e72fb9c8a1967a3b8df"
+	curlSHA256   = "7f8ac4aad1fbe3d994a849004df8169479717de45a7af78b72448318bb395ff6"
+
 	socketMethodRVA = 0x654620
 )
 
@@ -107,7 +109,7 @@ func mappingBase(maps, path string, id fileIdentity) (uint64, error) {
 const profileLibc = "/usr/lib64/libc.so.6"
 
 // libraries names the exact files of the verified profile, as the target maps them.
-type libraries struct{ SSL, Crypto, C string }
+type libraries struct{ SSL, Crypto, C, Curl string }
 
 // attach is deliberately private to the experiment. Target PID and exact
 // binaries are mandatory; there is no system-wide discovery or attachment.
@@ -120,7 +122,7 @@ func attachMode(object, cgroup, sslPath, cryptoPath string, pid int, liveSend bo
 	if err != nil {
 		return nil, err
 	}
-	return attachSpec(spec, cgroup, libraries{sslPath, cryptoPath, profileLibc}, pid, liveSend, true)
+	return attachSpec(spec, cgroup, libraries{SSL: sslPath, Crypto: cryptoPath, C: profileLibc}, pid, liveSend, true)
 }
 
 // attachSpec attaches the experiment to one target. The handshake uprobe is
@@ -170,6 +172,17 @@ func attachSpec(spec *ebpf.CollectionSpec, cgroup string, libs libraries, pid in
 		constants["ssl_base"] = sslBase
 		constants["crypto_base"] = base
 		constants["libc_base"] = libcBase
+		if libs.Curl != "" {
+			curlID, err := checkBinary(libs.Curl, curlSHA256)
+			if err != nil {
+				return nil, err
+			}
+			curlBase, err := mappingBase(string(maps), libs.Curl, curlID)
+			if err != nil {
+				return nil, err
+			}
+			constants["curl_base"] = curlBase
+		}
 	}
 	for name, value := range constants {
 		v := spec.Variables[name]

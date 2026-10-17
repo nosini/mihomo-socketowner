@@ -9,11 +9,13 @@
 const volatile __u64 ssl_base;
 const volatile __u64 crypto_base;
 const volatile __u64 libc_base;
+// Zero unless the separately selected libcurl profile was hash/mapping verified.
+const volatile __u64 curl_base;
 
 // A CO-RE flavor avoids colliding with the userspace pt_regs definition used
 // by the baseline uprobe. These are the kernel's member names.
 struct pt_regs___kernel {
-	unsigned long sp, ip, bp, bx, di, si, dx, orig_ax;
+	unsigned long sp, ip, bp, bx, di, si, dx, orig_ax, r8, r9, r10;
 } __attribute__((preserve_access_index));
 
 struct tcp_sock {
@@ -216,41 +218,10 @@ static __always_inline int expected_return(__u64 slot, __u64 expected)
 	return !READ_USER(actual, slot, 0) && actual == expected;
 }
 
-// Fixed to reviewed paths in one hashed libc/OpenSSL build. Never scan the stack
-// for plausible pointers or accept a partially matched call chain.
-static __always_inline __u64 sending_ssl(struct pt_regs___kernel *regs)
+// Common OpenSSL BIO/record frames above the concrete transport callback.
+static __noinline __u64 bio_caller_ssl(__u64 sp)
 {
-	__u64 sp = BPF_CORE_READ(regs, sp), ip = BPF_CORE_READ(regs, ip);
-	__u64 bp, buffer_bp = 0, ssl = 0;
-
-	if (BPF_CORE_READ(regs, orig_ax) != 1) // x86-64 write(2)
-		return 0;
-	if (ip == libc_base + 0xa7992) { // cancellable syscall path
-		if (!expected_return(sp, libc_base + 0x9ab58))
-			return 0;
-		sp += 8;
-		if (!expected_return(sp + 40, libc_base + 0x9abb1))
-			return 0;
-		sp += 48;
-	} else if (ip == libc_base + 0x9ab8a) { // noncancellable syscall path
-		if (!expected_return(sp + 24, libc_base + 0x9abb1))
-			return 0;
-		sp += 32;
-	} else {
-		return 0;
-	}
-	if (!expected_return(sp + 24, libc_base + 0x119a8a))
-		return 0;
-	sp += 32;
-	if (!expected_return(sp + 24, crypto_base + 0x188a18))
-		return 0;
-	sp += 32;
-	// sock_write has a frame pointer and 0x90 bytes below it. Neither libc
-	// syscall path changes rbp. Validate its relationship to the active SP.
-	bp = BPF_CORE_READ(regs, bp);
-	if (bp != sp + 0x90 || !expected_return(bp + 8, crypto_base + 0x17aeeb))
-		return 0;
-	sp = bp + 16;
+	__u64 buffer_bp = 0, ssl = 0;
 	if (!expected_return(sp + 8, crypto_base + 0x178ec0))
 		return 0;
 	sp += 16;
@@ -292,7 +263,132 @@ static __always_inline __u64 sending_ssl(struct pt_regs___kernel *regs)
 	return ssl;
 }
 
-static __always_inline int capture_send(struct send_evidence *evidence,
+// Fixed to reviewed paths in one hashed libc/OpenSSL build. Never scan the stack
+// for plausible pointers or accept a partially matched call chain.
+static __noinline __u64 sending_ssl(struct pt_regs___kernel *regs)
+{
+	__u64 sp = BPF_CORE_READ(regs, sp), ip = BPF_CORE_READ(regs, ip);
+	__u64 bp;
+
+	if (BPF_CORE_READ(regs, orig_ax) != 1) // x86-64 write(2)
+		return 0;
+	if (ip == libc_base + 0xa7992) { // cancellable syscall path
+		if (!expected_return(sp, libc_base + 0x9ab58))
+			return 0;
+		sp += 8;
+		if (!expected_return(sp + 40, libc_base + 0x9abb1))
+			return 0;
+		sp += 48;
+	} else if (ip == libc_base + 0x9ab8a) { // noncancellable syscall path
+		if (!expected_return(sp + 24, libc_base + 0x9abb1))
+			return 0;
+		sp += 32;
+	} else {
+		return 0;
+	}
+	if (!expected_return(sp + 24, libc_base + 0x119a8a))
+		return 0;
+	sp += 32;
+	if (!expected_return(sp + 24, crypto_base + 0x188a18))
+		return 0;
+	sp += 32;
+	// sock_write has a frame pointer and 0x90 bytes below it. Neither libc
+	// syscall path changes rbp. Validate its relationship to the active SP.
+	bp = BPF_CORE_READ(regs, bp);
+	if (bp != sp + 0x90 || !expected_return(bp + 8, crypto_base + 0x17aeeb))
+		return 0;
+	sp = bp + 16;
+	return bio_caller_ssl(sp);
+}
+
+// Exact curl8.22.0 TCP path: SSL -> HAPPY-EYEBALLS -> TCP. The middle
+// send callback tail-calls TCP, so it adds no live stack frame. Do not accept
+// proxy/filter variations or scan for plausible BIO/SSL pointers.
+static __noinline __u64 curl_sending_ssl(struct pt_regs___kernel *regs, __u64 *bio)
+{
+	__u64 sp = BPF_CORE_READ(regs, sp), ip = BPF_CORE_READ(regs, ip);
+	if (!curl_base || BPF_CORE_READ(regs, orig_ax) != 44 ||
+	    BPF_CORE_READ(regs, r10) != 0x4000 || BPF_CORE_READ(regs, r8) || BPF_CORE_READ(regs, r9))
+		return 0;
+	if (ip == libc_base + 0xa7992) {
+		if (!expected_return(sp, libc_base + 0x9ab58) ||
+		    !expected_return(sp + 48, libc_base + 0x9abb1)) return 0;
+		sp += 56;
+	} else if (ip == libc_base + 0x9ab8a) {
+		if (!expected_return(sp + 24, libc_base + 0x9abb1)) return 0;
+		sp += 32;
+	} else return 0;
+	if (!expected_return(sp + 24, libc_base + 0x12a54b)) return 0;
+	sp += 32;
+	if (!expected_return(sp + 24, curl_base + 0x2bfe7)) return 0;
+	sp += 32;
+	// cf_socket_send saved ossl_bio_cf_out_write's rbx (the active BIO).
+	if (!expected_return(sp + 0x148, curl_base + 0xc216c) ||
+	    READ_USER(*bio, sp, 0x120)) return 0;
+	sp += 0x150;
+	if (!expected_return(sp + 0x48, crypto_base + 0x17aeeb)) return 0;
+	return bio_caller_ssl(sp + 0x50);
+}
+
+static __noinline int curl_bio_socket(__u64 ssl, __u64 bio, __u64 socket_cf, int fd)
+{
+	__u64 method = 0, tls_cf = 0, happy = 0, owner = 0, value = 0, context = 0;
+	int scalar = 0;
+	__u8 index = 255;
+	if (!curl_base || fd < 0 ||
+	    READ_USER(method, bio, BIO_METHOD) || !method ||
+	    READ_USER(scalar, method, 0) || scalar != 0x401 ||
+	    READ_USER(value, method, 0x18) || value != curl_base + 0xc20f0 ||
+	    READ_USER(tls_cf, bio, 0x40) || !tls_cf ||
+	    READ_USER(value, tls_cf, 0) || value != curl_base + 0x11c800 ||
+	    READ_USER(happy, tls_cf, 8) || !happy ||
+	    READ_USER(value, happy, 0) || value != curl_base + 0x11c0a0 ||
+	    READ_USER(value, happy, 8) || value != socket_cf || !socket_cf ||
+	    READ_USER(value, socket_cf, 0) || value != curl_base + 0x11c5e0 ||
+	    READ_USER(value, socket_cf, 8) || value ||
+	    READ_USER(index, tls_cf, 0x20) || index ||
+	    READ_USER(index, happy, 0x20) || index ||
+	    READ_USER(index, socket_cf, 0x20) || index ||
+	    READ_USER(owner, tls_cf, 0x18) || !owner ||
+	    READ_USER(value, happy, 0x18) || value != owner ||
+	    READ_USER(value, socket_cf, 0x18) || value != owner ||
+	    READ_USER(context, tls_cf, 0x10) || !context ||
+	    READ_USER(context, context, 0x38) || !context ||
+	    READ_USER(value, context, 8) || value != ssl ||
+	    READ_USER(value, context, 0x10) || value != method ||
+	    READ_USER(context, socket_cf, 0x10) || !context ||
+	    READ_USER(scalar, context, 0x98) || scalar != fd)
+		return 0;
+	return 1;
+}
+
+// Keep userspace frame/object validation out of the publication frame, whose
+// bounded observation already occupies 288 bytes of the verifier's 512B stack.
+static __noinline __u64 transport_ssl(struct pt_regs___kernel *regs, int *fd)
+{
+	__u64 bio = 0, wbio = 0, other = 0, method = 0;
+	int scalar = 0;
+	int curl = BPF_CORE_READ(regs, orig_ax) == 44;
+	__u64 ssl = curl ? curl_sending_ssl(regs, &bio) : sending_ssl(regs);
+	if (!ssl) return 0;
+	if (!curl) bio = BPF_CORE_READ(regs, bx);
+	if (READ_USER(scalar, ssl, 0) || scalar ||
+	    READ_USER(scalar, ssl, SSL_SERVER) || scalar ||
+	    READ_USER(wbio, ssl, SSL_WBIO) || !wbio ||
+	    READ_USER(other, ssl, 0x60) || other != wbio ||
+	    READ_USER(method, wbio, BIO_METHOD) || method != crypto_base + 0x653da0 ||
+	    READ_USER(other, wbio, 0x48) || other != bio ||
+	    READ_USER(scalar, bio, BIO_INIT) || scalar != 1)
+		return 0;
+	*fd = BPF_CORE_READ(regs, di);
+	if (curl) {
+		if (!curl_bio_socket(ssl, bio, BPF_CORE_READ(regs, bx), *fd)) return 0;
+	} else if (READ_USER(method, bio, BIO_METHOD) || method != socket_method ||
+	    READ_USER(scalar, bio, BIO_NUM) || scalar < 0 || scalar != *fd) return 0;
+	return ssl;
+}
+
+static __noinline int capture_send(struct send_evidence *evidence,
 	struct sock *sk, struct msghdr *msg, struct pt_regs___kernel *regs, int size)
 {
 	// Validate the kernel's real single-buffer iterator against the syscall,
@@ -369,11 +465,11 @@ static long retry_chunk(__u32 chunk, void *opaque)
 	}
 	return 0;
 }
-static __always_inline int capture_retry(struct send_evidence *e,
-	struct sock *sk, struct msghdr *msg, struct pt_regs___kernel *regs,
-	int size, __u64 ssl, struct observation *o)
+static __noinline int capture_retry(struct send_evidence *e,
+	struct sock *sk, struct msghdr *msg, struct pt_regs___kernel *regs, struct observation *o)
 {
-	if (__sync_val_compare_and_swap(&e->ready, 1, 1) != 1 || e->ssl != ssl ||
+	int size = BPF_CORE_READ(regs, dx);
+	if (__sync_val_compare_and_swap(&e->ready, 1, 1) != 1 ||
 					e->origin.len != o->len || e->origin.fd != o->fd ||
 					!e->len || e->len > SEND_BYTES_MAX || size <= 0 || size > SEND_BYTES_MAX ||
 					BPF_CORE_READ(sk, __sk_common.skc_state) != 1)
@@ -415,8 +511,7 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	struct observation o = {};
 	struct task_struct *task;
 	struct pt_regs___kernel *regs;
-	__u64 ssl, bio, wbio = 0, bbio = 0, method = 0, next = 0, name = 0;
-	int type = -1, server = -1, init = 0, fd = -1;
+	__u64 ssl, name = 0;
 
 	if (ret)
 		return ret;
@@ -455,22 +550,8 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 		goto publish;
 	task = bpf_get_current_task_btf();
 	regs = (void *)bpf_task_pt_regs(task);
-	ssl = sending_ssl(regs);
-	if (!ssl)
-		goto publish;
-	o.pad = 2;
-	bio = BPF_CORE_READ(regs, bx); // live sock_write's raw socket BIO
-	if (READ_USER(type, ssl, 0) || type != 0 ||
-	    READ_USER(server, ssl, SSL_SERVER) || server != 0 ||
-	    READ_USER(wbio, ssl, SSL_WBIO) || !wbio ||
-	    READ_USER(bbio, ssl, 0x60) || bbio != wbio ||
-	    READ_USER(method, bbio, BIO_METHOD) || method != crypto_base + 0x653da0 ||
-	    READ_USER(next, bbio, 0x48) || next != bio ||
-	    READ_USER(method, bio, BIO_METHOD) || method != socket_method ||
-	    READ_USER(init, bio, BIO_INIT) || init != 1 ||
-	    READ_USER(fd, bio, BIO_NUM) || fd < 0 || fd != BPF_CORE_READ(regs, di))
-		goto publish;
-	o.fd = fd;
+	ssl = transport_ssl(regs, &o.fd);
+	if (!ssl) goto publish;
 	if (first && (scope->lifetime_ready != 1 || !capture_send(evidence, sk, msg, regs, size))) {
 		o.pad = 6;
 		goto publish;
@@ -494,7 +575,8 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 			__builtin_memcpy(&evidence->origin, &o, sizeof(o));
 			allowed = __sync_val_compare_and_swap(&evidence->ready, 0, 1) == 0;
 		} else {
-			allowed = capture_retry(evidence, sk, msg, regs, size, ssl, &o);
+			if (evidence->ssl == ssl && BPF_CORE_READ(regs, dx) == size)
+				allowed = capture_retry(evidence, sk, msg, regs, &o);
 			if (allowed) record_retry_test(1);
 		}
 		if (allowed) o.pad = 0;
@@ -639,5 +721,23 @@ int test_reclaim(struct __sk_buff *skb)
 	}
 	publication_end(publication);
 	return result;
+}
+#endif
+
+#ifdef HOSTNAME_CURL_TEST
+struct curl_test_params { __u64 ssl, bio, socket_cf; int fd; };
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, struct curl_test_params);
+} curl_test_input SEC(".maps");
+SEC("socket")
+int test_curl(struct __sk_buff *skb)
+{
+	__u32 zero = 0;
+	struct curl_test_params *p = bpf_map_lookup_elem(&curl_test_input, &zero);
+	if (!p) return 0;
+	return curl_bio_socket(p->ssl, p->bio, p->socket_cf, p->fd);
 }
 #endif

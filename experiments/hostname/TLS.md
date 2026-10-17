@@ -213,6 +213,14 @@ both TLS versions/families/interception modes. Wrong-host and SPKI-pin checks
 reject before any HTTP request (curl exit 60/90). Each mode/family adds eight
 TLS connections, four successful fallback requests and four deliberate rejects.
 This is evidence of a compatibility limit: curl's custom connection-filter BIO
-is outside the current raw socket-BIO/live-stack profile. Same OpenSSL binaries
-do not imply a supported send path. No adapter/profile or runtime checks were
-changed. See the service development guide for reproduction and evidence.
+is outside the base raw socket-BIO/live-stack profile. Same OpenSSL binaries
+do not imply a supported send path. That compatibility test
+retains the base profile. The separate [curl profile](CURL.md), selected by
+`--curl-adapter` in the service harness, now verifies the actual custom-BIO/filter
+chain and live send syscall. Both TLS versions/families/modes select NAMED or
+RENAMED for the two reserved origins, preserve TLS hostname/SPKI-pin rejection,
+and complete ordinary fallback after observer stop. It adds twelve TLS connections
+per mode/family: eight successful exchanges and four deliberate rejects. Two
+successes use a test-only thread constructor to verify the cancellable libc
+send path; it does not interpose socket or TLS calls. No
+reader/Mihomo runtime, capability or policy change was needed.

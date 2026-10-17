@@ -171,7 +171,7 @@ func runAuthorityVMObserver(t *testing.T, config authorityVMConfig, dec *json.De
 		t.Fatal(err)
 	}
 	// The baseline handshake observer is not part of this authority contract.
-	p, err := attachSpec(spec, config.Cgroup, libraries{config.SSL, config.Crypto, profileLibc}, config.PID, true, false)
+	p, err := attachSpec(spec, config.Cgroup, libraries{SSL: config.SSL, Crypto: config.Crypto, C: profileLibc}, config.PID, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}

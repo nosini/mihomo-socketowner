@@ -49,7 +49,7 @@ sudo /usr/local/bin/mihomo-hostname-observer \
     run
 ```
 
-`grep -E 'libssl|libcrypto|libc\.so' /proc/$pid/maps` shows which files the
+`grep -E 'libssl|libcrypto|libcurl|libc\.so' /proc/$pid/maps` shows which files the
 process mapped. The observer refuses to start unless the mapped device and
 inode are the files it hashed and the hashes are the profile's:
 
@@ -58,6 +58,9 @@ inode are the files it hashed and the hashes are the profile's:
 | libssl 3.5.3, x86-64-v3 | `2dead83fbc10ddfbc6240921ebe691995df7753e1a11319de923534e4c992064` |
 | libcrypto 3.5.3, x86-64-v3 | `f1b2c9b4070ea2724480a3f0d65e0f80b5d5665782e0de18e7190a0348f33c0b` |
 | libc | `090f858814642a3f28e5f4ae6499667e7901e47902ca3e72fb9c8a1967a3b8df` |
+
+The optional [curl adapter](CURL.md) adds one exact libcurl hash and transport
+path without changing the reader contract or service permissions.
 
 Then enable discovery in an experimental Mihomo build, using the default
 endpoint:
@@ -133,7 +136,9 @@ from another boot, PID namespace or pin directory.
 
 ## What it checks before attaching
 
-- The profile name is `openssl-3.5.3-x86-64-v3`, the only verified profile.
+- The profile name is `openssl-3.5.3-x86-64-v3`, the base socket-BIO profile. The optional
+  `openssl-3.5.3-curl-8.22.0-x86-64-v3` profile also requires `-libcurl`; see
+  [the verified curl path](CURL.md).
 - All paths are absolute and canonical. The reader user is not root.
 - The target is inside the given cgroup v2 directory, as seen from the root
   cgroup namespace at `/sys/fs/cgroup`.

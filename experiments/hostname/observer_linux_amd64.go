@@ -28,8 +28,11 @@ import (
 //go:embed observer_bpfel.o
 var observerObject []byte
 
-// ObserverProfile names the only verified library and layout profile.
+// ObserverProfile names the verified base socket-BIO library/layout profile.
 const ObserverProfile = "openssl-3.5.3-x86-64-v3"
+
+// CurlObserverProfile additionally verifies one libcurl custom-BIO send path.
+const CurlObserverProfile = "openssl-3.5.3-curl-8.22.0-x86-64-v3"
 
 // ObserverConfig identifies everything the observer attaches to. Paths must be
 // absolute and canonical; the libraries are the files the target has mapped.
@@ -42,6 +45,7 @@ type ObserverConfig struct {
 	SSL       string
 	Crypto    string
 	C         string
+	Curl      string // required only by CurlObserverProfile
 	ReaderUID uint32
 	ReaderGID uint32
 }
@@ -57,8 +61,15 @@ func canonicalPath(name, path string) error {
 }
 
 func (c ObserverConfig) validate() error {
-	if c.Profile != ObserverProfile {
-		return fmt.Errorf("unsupported observer profile %q; only %s is verified", c.Profile, ObserverProfile)
+	if c.Profile != ObserverProfile && c.Profile != CurlObserverProfile {
+		return fmt.Errorf("unsupported observer profile %q", c.Profile)
+	}
+	if c.Profile == CurlObserverProfile {
+		if err := canonicalPath("libcurl", c.Curl); err != nil {
+			return err
+		}
+	} else if c.Curl != "" {
+		return errors.New("libcurl requires the curl observer profile")
 	}
 	if c.TargetPID <= 0 {
 		return errors.New("a target PID is required")
@@ -85,12 +96,12 @@ func observerSpec() (*ebpf.CollectionSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, name := range []string{"publication_faults", "publication_error", "packet_test_evidence", "reclaim_test_state", "retry_test_counts"} {
+	for _, name := range []string{"publication_faults", "publication_error", "packet_test_evidence", "reclaim_test_state", "retry_test_counts", "curl_test_input"} {
 		if spec.Maps[name] != nil {
 			return nil, errors.New("embedded observer object is a fault-injection build")
 		}
 	}
-	for _, name := range []string{"test_publication", "test_packet", "test_reclaim"} {
+	for _, name := range []string{"test_publication", "test_packet", "test_reclaim", "test_curl"} {
 		if spec.Programs[name] != nil {
 			return nil, errors.New("embedded observer object is a fault-injection build")
 		}
@@ -315,7 +326,7 @@ func runObserver(ctx context.Context, c ObserverConfig, expected *registeredTarg
 	if err != nil {
 		return err
 	}
-	o.probe, err = attachSpec(spec, c.Cgroup, libraries{c.SSL, c.Crypto, c.C}, c.TargetPID, true, false)
+	o.probe, err = attachSpec(spec, c.Cgroup, libraries{SSL: c.SSL, Crypto: c.Crypto, C: c.C, Curl: c.Curl}, c.TargetPID, true, false)
 	if err != nil {
 		return err
 	}

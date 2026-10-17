@@ -25,7 +25,7 @@ import (
 
 type options struct {
 	runtime, pin, cgroup, profile string
-	ssl, crypto, libc             string
+	ssl, crypto, libc, curl       string
 	readerUser, readerGroup       string
 	targetPID                     int
 	registration                  string
@@ -38,10 +38,11 @@ func main() {
 	flag.StringVar(&o.pin, "pin", "/sys/fs/bpf/mihomo-hostname", "private bpffs directory for this observer's pins")
 	flag.StringVar(&o.cgroup, "cgroup", "", "cgroup v2 directory containing the target (required for run/prepare)")
 	flag.IntVar(&o.targetPID, "target-pid", 0, "process ID of the OpenSSL application to observe (required for run/prepare)")
-	flag.StringVar(&o.profile, "profile", "", "library profile; only "+hostname.ObserverProfile+" is supported (required for run/prepare)")
+	flag.StringVar(&o.profile, "profile", "", "library profile: "+hostname.ObserverProfile+" or "+hostname.CurlObserverProfile)
 	flag.StringVar(&o.ssl, "libssl", "", "libssl file the target has mapped (required for run/prepare)")
 	flag.StringVar(&o.crypto, "libcrypto", "", "libcrypto file the target has mapped (required for run/prepare)")
 	flag.StringVar(&o.libc, "libc", "", "libc file the target has mapped (required for run/prepare)")
+	flag.StringVar(&o.curl, "libcurl", "", "exact mapped libcurl file (required by the curl profile)")
 	flag.StringVar(&o.readerUser, "reader-user", "", "only user allowed to connect, normally mihomo (name or ID; required for run)")
 	flag.StringVar(&o.readerGroup, "reader-group", "", "group given access to the endpoint (name or ID; required for run)")
 	flag.Usage = func() {
@@ -107,7 +108,7 @@ func (o options) config() (hostname.ObserverConfig, error) {
 	}
 	return hostname.ObserverConfig{
 		Runtime: o.runtime, Pins: o.pin, Cgroup: o.cgroup, Profile: o.profile, TargetPID: o.targetPID,
-		SSL: o.ssl, Crypto: o.crypto, C: o.libc, ReaderUID: uid, ReaderGID: gid,
+		SSL: o.ssl, Crypto: o.crypto, C: o.libc, Curl: o.curl, ReaderUID: uid, ReaderGID: gid,
 	}, nil
 }
 

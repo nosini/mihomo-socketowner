@@ -19,7 +19,7 @@ func TestObserverObject(t *testing.T) {
 	if err := validateSendGuardMap(spec.Maps["send_guards"]); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"target_tgid", "socket_method", "ssl_base", "crypto_base", "libc_base"} {
+	for _, name := range []string{"target_tgid", "socket_method", "ssl_base", "crypto_base", "libc_base", "curl_base"} {
 		if spec.Variables[name] == nil {
 			t.Fatalf("embedded object lacks %s", name)
 		}
@@ -67,5 +67,26 @@ func TestTargetInCgroup(t *testing.T) {
 	}
 	if err := targetInCgroup(os.Getpid(), t.TempDir()); err == nil {
 		t.Fatal("accepted a directory outside cgroup v2")
+	}
+}
+
+func TestCurlObserverConfig(t *testing.T) {
+	valid := ObserverConfig{Runtime: "/run/hostname", Pins: "/sys/fs/bpf/hostname", Cgroup: "/sys/fs/cgroup/app",
+		Profile: CurlObserverProfile, TargetPID: 100, SSL: "/lib/ssl", Crypto: "/lib/crypto", C: "/lib/libc",
+		Curl: "/lib/libcurl", ReaderUID: 1000}
+	if err := valid.validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*ObserverConfig){
+		"missing curl":           func(c *ObserverConfig) { c.Curl = "" },
+		"relative curl":          func(c *ObserverConfig) { c.Curl = "lib/curl" },
+		"unclean curl":           func(c *ObserverConfig) { c.Curl = "/lib/../lib/curl" },
+		"base profile with curl": func(c *ObserverConfig) { c.Profile = ObserverProfile },
+	} {
+		c := valid
+		change(&c)
+		if err := c.validate(); err == nil {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }

@@ -7,7 +7,7 @@ Design and implementation record for optional application hostname discovery.
 | Prepared | 2026-10-14 |
 | Project status | Milestone 1 in progress; experiment authorized and started 2026-10-16 |
 | Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration; controlled completed TLS; final-release guard reclamation; larger initial ClientHellos and verified retries; TUN system-stack lookup; controlled TLS ticket resumption and SSL reuse; local nftables auto-redirect validation |
-| Work not completed | curl custom-BIO attribution; broader send/reinjection coverage; browser workloads and production measurements |
+| Work not completed | broader send/reinjection coverage; browser workloads and production measurements |
 | Intended reader | An agent returning to this workspace without the original conversation |
 
 This document preserves the user's objective and the resulting assessment. The
@@ -707,11 +707,17 @@ incorrect. Forwarded/prerouting, bridge and iptables-fallback coverage remain op
 
 
 The optional real-application service matrix confirms that installed curl
-8.22.0 with the exact OpenSSL 3.5.3 libraries is outside the current raw
+8.22.0 with the exact OpenSSL 3.5.3 libraries is outside the base raw
 socket-BIO adapter. Its custom connection-filter BIO does not establish the
 verified socket relationship. With the target registered and confined observer
 active before each transfer, both configured origins remain unattributed and
 use ordinary DIRECT fallback. TLS 1.2/1.3 HTTP/1.1 exchanges complete through
 both confined families/paths; wrong-host and SPKI-pin cases deliver no request.
 This preserves connectivity and the attribution boundary, but does not establish
-curl hostname-routing support. A verified custom-BIO adapter remains required.
+curl hostname-routing support. A separate opt-in
+[verified curl profile](../experiments/hostname/CURL.md) now checks its exact
+custom-BIO/filter/socket relationship and live syscall frames. That profile
+selects NAMED/RENAMED on the same confined direct TCP HTTP/1.1 matrices while
+preserving TLS verification failures and observer-stop fallback. The base profile
+continues to reject this path; curl proxy layers, other builds, HTTP/2, ECH and
+browser behavior remain unproved.

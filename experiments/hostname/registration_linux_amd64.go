@@ -72,7 +72,11 @@ func PrepareObserver(path string, config ObserverConfig) error {
 	if err != nil {
 		return err
 	}
-	for _, lib := range []struct{ path, hash string }{{config.SSL, sslSHA256}, {config.Crypto, cryptoSHA256}, {config.C, libcSHA256}} {
+	libs := []struct{ path, hash string }{{config.SSL, sslSHA256}, {config.Crypto, cryptoSHA256}, {config.C, libcSHA256}}
+	if config.Curl != "" {
+		libs = append(libs, struct{ path, hash string }{config.Curl, curlSHA256})
+	}
+	for _, lib := range libs {
 		id, err := checkBinary(lib.path, lib.hash)
 		if err != nil {
 			return err
