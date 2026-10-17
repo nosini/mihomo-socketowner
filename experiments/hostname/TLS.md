@@ -194,3 +194,12 @@ window and verified retries of its remaining bytes, as defined by
 discovery authority. Later application writes on an already committed
 connection are relayed normally. The service test needs no Mihomo behavior
 changes beyond the optional reader.
+
+Controlled 421 recovery is also covered in all four matrices for both TLS
+versions. The peer ends only a coalesced second-origin stream with 421 and holds
+its first-origin sibling open. The fixture retries identical POST headers/path
+and body on a fresh verified TLS connection: new cookie/ID and second-origin SNI
+select RENAMED. The retry completes before releasing the original sibling;
+that sibling and subsequent streams retain NAMED on the original connection.
+This is explicit fixture retry behavior, not a browser retry-policy test. See
+[RFC 9110 section 15.5.20](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.20).

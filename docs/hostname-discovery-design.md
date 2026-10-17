@@ -451,6 +451,11 @@ share an existing named or fallback route; fresh TLS SNI selects a fresh rule.
 An uncovered origin is refused by the fixture client before frames are built,
 and the original connection remains usable. These explicit same-IP/port origin
 mappings do not establish browser DNS or automatic coalescing behavior.
+A controlled 421 response on a coalesced second-origin stream is recovered by
+retrying identical headers/path/body on fresh verified TLS with that origin's
+SNI and own rule. An open first-origin sibling completes afterward, and later
+streams keep the original connection/route. The fixture explicitly drives the
+retry; browser retry policy and per-stream routing remain outside this proof.
 
 ### QUIC needs separate correlation
 
@@ -689,7 +694,9 @@ Controlled same/cross-origin HTTP/2 multiplexing/reuse over TLS 1.2/1.3 is also 
 through both confined paths/families. Named and fallback connections retain
 their committed route through observer restart and later concurrent streams;
 fresh hostnames still select the appropriate rule. No per-stream hostname
-attribution or HTTP/2 parsing is added to the runtime.
+attribution or HTTP/2 parsing is added to the runtime. Controlled 421 recovery
+uses a fresh second-origin TLS connection while retaining the original
+connection and its other streams.
 
 Local nftables [auto-redirect](../experiments/hostname/TUN.md) already labels its
 accepted TCP connections REDIR, so its existing post-NAT lookup needs no routing
