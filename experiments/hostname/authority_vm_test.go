@@ -557,7 +557,7 @@ func TestVMObserverCrashAuthority(t *testing.T) {
 					a.assertName(t, a.reader, key, c.cookie)
 					a.f.command("close %d", c.slot)
 					var guard uint64
-					if err := a.maps[2].Lookup(c.cookie, &guard); err != nil || guard != 3 {
+					if err := a.maps[2].Lookup(c.cookie, &guard); !errors.Is(err, ebpf.ErrKeyNotExist) {
 						t.Fatalf("lost retirement during descriptor teardown: %d, %v", guard, err)
 					}
 					c, key = a.named(t)

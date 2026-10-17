@@ -30,7 +30,7 @@ func assertRetired(t *testing.T, p *probe, c connection, key flowKey) {
 	for {
 		var state uint64
 		err := p.collection.Maps["send_guards"].Lookup(c.cookie, &state)
-		if err == nil && state == 3 {
+		if (err == nil && state == 3) || errors.Is(err, ebpf.ErrKeyNotExist) {
 			break
 		}
 		if err != nil || time.Now().After(deadline) {
@@ -38,10 +38,10 @@ func assertRetired(t *testing.T, p *probe, c connection, key flowKey) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if value, err := stableLookupFor[observation](p, "send_snapshots", c.cookie); !errors.Is(err, errSendAmbiguous) || value != (observation{}) {
+	if value, err := stableLookupFor[observation](p, "send_snapshots", c.cookie); (!errors.Is(err, errSendAmbiguous) && !errors.Is(err, ebpf.ErrKeyNotExist)) || value != (observation{}) {
 		t.Fatalf("retired snapshot exposed: %+v, %v", value, err)
 	}
-	if value, err := stableLookupFor[flowObservation](p, "send_flows", key); !errors.Is(err, errSendAmbiguous) || value != (flowObservation{}) {
+	if value, err := stableLookupFor[flowObservation](p, "send_flows", key); (!errors.Is(err, errSendAmbiguous) && !errors.Is(err, ebpf.ErrKeyNotExist)) || value != (flowObservation{}) {
 		t.Fatalf("retired flow exposed: %+v, %v", value, err)
 	}
 }

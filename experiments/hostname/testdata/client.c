@@ -20,7 +20,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-struct connection { SSL *ssl; int fd; int used; char pin[65]; } connections[128];
+struct connection { SSL *ssl; int fd; int used; char pin[65]; } connections[512];
 static SSL_CTX *ctx;
 static int family, port;
 static const char *address;
@@ -216,8 +216,8 @@ int main(int argc, char **argv)
 		}
 		if (!strcmp(op, "open")) {
 			check(sscanf(line, "%*s %511s %31s %31s", name, order, mode) == 3, "open");
-			for (i = 0; i < 128 && connections[i].used; i++);
-			check(i < 128, "slots");
+			for (i = 0; i < 512 && connections[i].used; i++);
+			check(i < 512, "slots");
 			int fd = connect_socket();
 			if (!strcmp(mode, "dup")) {
 				int copy = fcntl(fd, F_DUPFD_CLOEXEC, 256);
@@ -227,7 +227,7 @@ int main(int argc, char **argv)
 			report(i);
 			continue;
 		}
-		check(sscanf(line, "%*s %d", &i) == 1 && i >= 0 && i < 128 && connections[i].used, "slot");
+		check(sscanf(line, "%*s %d", &i) == 1 && i >= 0 && i < 512 && connections[i].used, "slot");
 		struct connection *c = &connections[i];
 		if (!strcmp(op, "verify")) {
 			char ca[512], hostname[256], pin[65];
@@ -265,7 +265,7 @@ int main(int argc, char **argv)
 			printf("corked %d\n", queued);
 		} else if (!strcmp(op, "cork-pair") || !strcmp(op, "parallel")) {
 			int j;
-			check(sscanf(line, "%*s %*d %d", &j) == 1 && j >= 0 && j < 128 && j != i && connections[j].used, "second slot");
+			check(sscanf(line, "%*s %*d %d", &j) == 1 && j >= 0 && j < 512 && j != i && connections[j].used, "second slot");
 			int one = 1;
 			check(setsockopt(c->fd, IPPROTO_TCP, TCP_CORK, &one, sizeof(one)) == 0, "cork");
 			if (!strcmp(op, "parallel")) {
@@ -312,8 +312,8 @@ int main(int argc, char **argv)
 		} else if (!strcmp(op, "alias")) {
 			check(sscanf(line, "%*s %*d %511s", name) == 1, "alias");
 			int j;
-			for (j = 0; j < 128 && connections[j].used; j++);
-			check(j < 128, "alias slots");
+			for (j = 0; j < 512 && connections[j].used; j++);
+			check(j < 512, "alias slots");
 			int fd = fcntl(c->fd, F_DUPFD_CLOEXEC, 256);
 			check(fd >= 0, "alias dup");
 			connections[j] = (struct connection){.ssl = new_ssl(fd, name, "fd-first", "fd"), .fd = fd, .used = 1};
@@ -355,7 +355,7 @@ int main(int argc, char **argv)
 			puts("ok");
 		} else { die("unknown command"); }
 	}
-	for (int i = 0; i < 128; i++) {
+	for (int i = 0; i < 512; i++) {
 		if (connections[i].used) { SSL_free(connections[i].ssl); close(connections[i].fd); }
 	}
 	SSL_CTX_free(ctx);

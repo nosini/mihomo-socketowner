@@ -44,7 +44,7 @@ func TestBootstrapEnvelope(t *testing.T) {
 		{"magic", func(b []byte) []byte { b[0] ^= 1; return b }},
 		{"version", func(b []byte) []byte { binary.LittleEndian.PutUint16(b[8:], 2); return b }},
 		{"status", func(b []byte) []byte { b[12] = 1; return b }},
-		{"profile", func(b []byte) []byte { b[64] = 2; return b }},
+		{"profile", func(b []byte) []byte { b[64] = 3; return b }},
 		{"reserved", func(b []byte) []byte { b[79] = 1; return b }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

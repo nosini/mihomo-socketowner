@@ -1,7 +1,8 @@
 package hostname
 
-// Hostname bootstrap v1/profile 1, frozen in hostname/CONTRACT.md and
-// deliberately separate from the owner-map ABI.
+// Hostname protocol v1/profile 2; historical profile 1 remains frozen in
+// hostname/CONTRACT.md. Reclamation obligations are in hostname/PROFILE2.md.
+// This contract is deliberately separate from the owner-map ABI.
 // The socket-creating process is also the observer/cleanup owner. Socket
 // activation, descriptor delegation and alternate PID namespaces are excluded.
 
@@ -30,6 +31,7 @@ type bootstrapHeader struct {
 	Nonce    [16]byte
 	Instance [16]byte
 	Manifest authorityManifest
+	Profile  uint32 // zero preserves the frozen profile-1 golden envelope
 }
 
 func (h bootstrapHeader) encode() []byte {
@@ -43,15 +45,22 @@ func (h bootstrapHeader) encode() []byte {
 	for i, id := range h.Manifest.Maps {
 		binary.LittleEndian.PutUint32(b[48+i*4:], uint32(id))
 	}
-	binary.LittleEndian.PutUint32(b[64:], 1) // fixed sole-first-send layout profile
+	profile := h.Profile
+	if profile == 0 {
+		profile = 1
+	}
+	binary.LittleEndian.PutUint32(b[64:], profile)
 	return b
 }
 
 func decodeBootstrap(b []byte) (bootstrapHeader, error) {
 	var h bootstrapHeader
 	if len(b) != bootstrapBytes || !bytes.Equal(b[:8], bootstrapMagic[:]) || binary.LittleEndian.Uint16(b[8:]) != 1 ||
-		binary.LittleEndian.Uint16(b[12:]) != 0 || binary.LittleEndian.Uint32(b[64:]) != 1 || !bytes.Equal(b[68:], make([]byte, 12)) {
+		binary.LittleEndian.Uint16(b[12:]) != 0 || (binary.LittleEndian.Uint32(b[64:]) != 1 && binary.LittleEndian.Uint32(b[64:]) != 2) || !bytes.Equal(b[68:], make([]byte, 12)) {
 		return h, errors.New("incompatible hostname bootstrap envelope")
+	}
+	if binary.LittleEndian.Uint32(b[64:]) == 2 {
+		h.Profile = 2
 	}
 	h.Kind, h.Count = binary.LittleEndian.Uint16(b[10:]), binary.LittleEndian.Uint16(b[14:])
 	copy(h.Nonce[:], b[16:32])
@@ -138,7 +147,7 @@ func serveBootstrap(c *net.UnixConn, readerUID uint32, instance [16]byte, r *aut
 		return err
 	}
 	h, err := decodeBootstrap(data)
-	if err != nil || h.Kind != 1 || h.Count != 0 || len(fds) != 0 || h.Nonce == [16]byte{} || h.Instance != [16]byte{} || h.Manifest != (authorityManifest{}) {
+	if err != nil || h.Profile != 2 || h.Kind != 1 || h.Count != 0 || len(fds) != 0 || h.Nonce == [16]byte{} || h.Instance != [16]byte{} || h.Manifest != (authorityManifest{}) {
 		return errors.New("invalid hostname bootstrap request")
 	}
 	r.mu.RLock()
@@ -185,7 +194,7 @@ func receiveAuthority(c *net.UnixConn, deadline time.Time) (_ *authorityReader, 
 		return nil, instance, err
 	}
 	defer unix.Close(pidfd)
-	request := bootstrapHeader{Kind: 1}
+	request := bootstrapHeader{Kind: 1, Profile: 2}
 	if _, err := rand.Read(request.Nonce[:]); err != nil {
 		return nil, instance, err
 	}
@@ -198,7 +207,7 @@ func receiveAuthority(c *net.UnixConn, deadline time.Time) (_ *authorityReader, 
 		return nil, instance, err
 	}
 	h, err := decodeBootstrap(data)
-	if err != nil || h.Kind != 2 || h.Count != 4 || len(fds) != 4 || h.Nonce != request.Nonce || h.Instance == [16]byte{} {
+	if err != nil || h.Profile != request.Profile || h.Kind != 2 || h.Count != 4 || len(fds) != 4 || h.Nonce != request.Nonce || h.Instance == [16]byte{} {
 		return nil, instance, errors.New("invalid hostname bootstrap response")
 	}
 	var maps [4]*ebpf.Map

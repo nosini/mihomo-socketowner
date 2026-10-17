@@ -1,14 +1,17 @@
 # Optional hostname reader
 
 This Go module reads application hostname evidence from a separately installed
-`mihomo-hostname-observer`. It implements [hostname contract v1](CONTRACT.md),
-layout profile 1. It has no dependency on socketowner's loader or experiment Go
-packages, and does not install or start either privileged executable.
+`mihomo-hostname-observer`. It implements protocol 1,
+[layout profile 2](PROFILE2.md), building on the frozen
+[profile-1 contract](CONTRACT.md). It has no dependency on socketowner's loader
+or experiment Go packages, and does not install or start either privileged executable.
 
 The feature remains experimental: one exact OpenSSL build, one target process,
-TCP, a sole first send of at most 4096 bytes, and 256 socket guards per observer
-instance. It does not provide ECH inner names or browser support. Observer service
-confinement and broader transport coverage remain separate work.
+TCP, a sole first send of at most 4096 bytes, and 256 concurrently retained
+socket guards per observer instance. Final release reclaims a slot. It does not
+provide ECH inner names or browser support. A confined optional service is
+available separately; broader transport coverage remains open. Upgrades from
+profile 1 require rebuilding the optional consumer and observer together; mismatched profiles return unknown.
 
 ## Using the reader
 
@@ -62,7 +65,7 @@ routing deadline, concurrency bound and prompt descriptor cleanup.
 The reader authenticates root with `SO_PEERCRED` and obtains `SO_PEERPIDFD`
 directly. It receives four frozen read-only map descriptors, verifies their
 identities/layouts and repeatedly checks the peer pidfd, authority gate,
-publication generation and permanent socket guard. It never opens pins or
+publication generation and socket-lifetime guard. It never opens pins or
 application `/proc` files, and never loads or attaches BPF. Access to its own
 `/proc/self/fdinfo` is needed for frozen-state validation. Missing kernel
 features return unknown. The trusted publisher's obligations are part of the

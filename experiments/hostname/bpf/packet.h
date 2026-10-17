@@ -6,6 +6,7 @@ struct send_evidence {
 	__u32 len; // published last by the sole eligible LSM writer
 	__u8 bytes[SEND_BYTES_MAX];
 	__u64 lifetime_ready;
+	__u64 callbacks; // profile 2: retirement bit and active guard-pointer leases
 };
 struct flow_key {
 	__u64 netns;

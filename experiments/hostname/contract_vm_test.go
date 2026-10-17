@@ -132,7 +132,7 @@ func TestVMHostnameContract(t *testing.T) {
 }
 
 func TestVMHostnameContractBadPublisher(t *testing.T) {
-	for _, attack := range []string{"nonce", "version", "profile", "missing", "extra", "truncated-rights", "wrong-type"} {
+	for _, attack := range []string{"nonce", "version", "profile", "legacy-profile", "missing", "extra", "truncated-rights", "wrong-type"} {
 		t.Run(attack, func(t *testing.T) {
 			root, _ := bootstrapVMRoot(t)
 			endpoint := filepath.Join(root, "contract.sock")

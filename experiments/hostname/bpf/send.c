@@ -46,8 +46,9 @@ struct {
 // Monotonic, non-evicting state: 0 = no attempt, 1 = exactly one attempt,
 // 3 = permanently excluded (ambiguous, unsupported, or retired). A second
 // send is excluded even if sequential or identically named: TCP may still hold
-// bytes from the first. Never delete or
-// reinitialize these entries while this observer collection is in use.
+// bytes from the first. Profile 2 deletes only after final socket release
+// and after every callback holding a guard pointer has left. No live cookie
+// is reset, replaced or evicted.
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 256);
@@ -55,6 +56,50 @@ struct {
 	__type(key, __u64);
 	__type(value, __u64);
 } send_guards SEC(".maps");
+
+// A socket-local lease prevents a preallocated hash slot being recycled while
+// an older callback still holds its value pointer. Retirement blocks new leases;
+// the last old lease performs deletion inside its publication interval.
+#define SEND_RETIRED (1ULL << 63)
+static __always_inline void remove_guard(__u64 cookie, __u64 *publication)
+{
+	// Fault builds delete an absent key, preserving the real guard on error.
+	__u64 key = (fault_mask() & FAULT_GUARD_DELETE) ? 0 : cookie;
+	long error = bpf_map_delete_elem(&send_guards, &key);
+	if (error) {
+		save_publication_error(error);
+		publication_fail(publication);
+	}
+}
+static __always_inline int enter_send(struct send_evidence *e, __u64 *publication)
+{
+	for (int i = 0; i < 16; i++) {
+		__u64 old = *(volatile __u64 *)&e->callbacks;
+		if (old & SEND_RETIRED)
+			return 0;
+		if (old >= PUBLICATION_WRITERS)
+			break;
+		if (__sync_val_compare_and_swap(&e->callbacks, old, old + 1) == old)
+			return 1;
+	}
+	publication_fail(publication);
+	return 0;
+}
+static __always_inline void leave_send(struct send_evidence *e, __u64 cookie,
+	__u64 *publication)
+{
+	__u64 old = __sync_fetch_and_sub(&e->callbacks, 1);
+	if (old == (SEND_RETIRED | 1))
+		remove_guard(cookie, publication);
+}
+
+static __always_inline void retire_send(struct send_evidence *e, __u64 cookie,
+	__u64 *publication)
+{
+	__u64 old = __sync_fetch_and_or(&e->callbacks, SEND_RETIRED);
+	if (!old)
+		remove_guard(cookie, publication);
+}
 
 SEC("cgroup/sock_create")
 int seed_send(struct bpf_sock *sk)
@@ -82,20 +127,19 @@ int seed_send(struct bpf_sock *sk)
 	return 1;
 }
 
-// Retire without deleting either records or their non-evicting validity key.
-// This hook runs at protocol release, even while TCP retains orphaned state.
+// Final file release precedes protocol close, so orphaned TCP output may still
+// follow. Mark socket storage retired first and drain all older guard leases.
 SEC("cgroup/sock_release")
 int release_send(struct bpf_sock *sk)
 {
-	__u64 cookie = bpf_get_socket_cookie(sk);
-	__u64 *guard = bpf_map_lookup_elem(&send_guards, &cookie);
-	if (!guard)
-		return 1; // not created in this observer's tracked scope
+	struct send_evidence *e = bpf_sk_storage_get(&send_scope, sk, 0, 0);
+	if (!e)
+		return 1;
 	__u64 *publication = publication_begin();
-	if (publication) {
-		__sync_fetch_and_or(guard, 3);
-		publication_end(publication);
-	}
+	if (!publication)
+		return 1;
+	retire_send(e, bpf_get_socket_cookie(sk), publication);
+	publication_end(publication);
 	return 1;
 }
 
@@ -105,16 +149,24 @@ int lifetime_send(struct bpf_sock_ops *ctx)
 	if (!ctx->is_fullsock ||
 	    (ctx->op != BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB && ctx->op != BPF_SOCK_OPS_STATE_CB))
 		return 1;
-	__u64 cookie = bpf_get_socket_cookie(ctx);
-	__u64 *guard = bpf_map_lookup_elem(&send_guards, &cookie);
-	if (!guard)
+	struct bpf_sock *sk = ctx->sk;
+	struct send_evidence *evidence = sk ? bpf_sk_storage_get(&send_scope, sk, 0, 0) : 0;
+	if (!evidence)
 		return 1;
 	__u64 *publication = publication_begin();
 	if (!publication)
 		return 1;
+	if (!enter_send(evidence, publication)) {
+		publication_end(publication);
+		return 1;
+	}
+	__u64 cookie = bpf_get_socket_cookie(ctx);
+	__u64 *guard = bpf_map_lookup_elem(&send_guards, &cookie);
+	if (!guard) {
+		publication_fail(publication);
+		goto done;
+	}
 	if (ctx->op == BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB) {
-		struct bpf_sock *sk = ctx->sk;
-		struct send_evidence *evidence = sk ? bpf_sk_storage_get(&send_scope, sk, 0, 0) : 0;
 		long error = bpf_sock_ops_cb_flags_set(ctx,
 			ctx->bpf_sock_ops_cb_flags | BPF_SOCK_OPS_STATE_CB_FLAG |
 			((fault_mask() & FAULT_STATE_FLAGS) ? (1U << 30) : 0));
@@ -127,6 +179,8 @@ int lifetime_send(struct bpf_sock_ops *ctx)
 	} else if (ctx->args[1] != 1) { // any non-ESTABLISHED state
 		__sync_fetch_and_or(guard, 3);
 	}
+done:
+	leave_send(evidence, cookie, publication);
 	publication_end(publication);
 	return 1;
 }
@@ -248,10 +302,15 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	publication = publication_begin();
 	if (!publication)
 		return 0;
+	if (!enter_send(evidence, publication)) {
+		publication_end(publication);
+		return 0;
+	}
 	o.cookie = bpf_get_socket_cookie(sk);
 	__u64 *guard = bpf_map_lookup_elem(&send_guards, &o.cookie);
 	if (!guard) {
 		publication_fail(publication);
+		leave_send(evidence, o.cookie, publication);
 		publication_end(publication);
 		return 0;
 	}
@@ -315,6 +374,7 @@ publish:
 			publication_fail(publication);
 		}
 	}
+	leave_send(evidence, o.cookie, publication);
 	publication_end(publication);
 	return 0;
 }
@@ -351,6 +411,10 @@ int observe_flow(struct __sk_buff *skb)
 	publication = publication_begin();
 	if (!publication)
 		return 1;
+	if (!enter_send(evidence, publication)) {
+		publication_end(publication);
+		return 1;
+	}
 	record.cookie = bpf_get_socket_cookie(skb);
 	__u64 *guard = bpf_map_lookup_elem(&send_guards, &record.cookie);
 	if (!guard) {
@@ -384,6 +448,51 @@ int observe_flow(struct __sk_buff *skb)
 		}
 	}
 done:
+	leave_send(evidence, record.cookie, publication);
 	publication_end(publication);
 	return 1;
 }
+
+#ifdef HOSTNAME_PUBLICATION_TEST
+// Deterministic interleavings of the same lease/retirement helpers, with held
+// publication counts across TestRun calls. Never included in the observer.
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, struct send_evidence);
+} reclaim_test_state SEC(".maps");
+SEC("socket")
+int test_reclaim(struct __sk_buff *skb)
+{
+	__u32 zero = 0;
+	__u8 command;
+	__u64 cookie = ~0ULL;
+	struct send_evidence *e = bpf_map_lookup_elem(&reclaim_test_state, &zero);
+	if (!e || bpf_skb_load_bytes(skb, 0, &command, 1)) return 0;
+	if (command == 3) {
+		__u64 *publication = bpf_map_lookup_elem(&publication_state, &zero);
+		if (!publication || !(e->callbacks & ~SEND_RETIRED)) return 0;
+		leave_send(e, cookie, publication);
+		publication_end(publication);
+		return 1;
+	}
+	__u64 *publication = publication_begin();
+	if (!publication) return 0;
+	int result = 1;
+	if (command == 0) {
+		__u64 initial = 1;
+		if (bpf_map_update_elem(&send_guards, &cookie, &initial, BPF_NOEXIST))
+			publication_fail(publication);
+	} else if (command == 1) {
+		result = enter_send(e, publication);
+		if (result) return 1; // retain the publication and callback lease
+	} else if (command == 2) {
+		retire_send(e, cookie, publication);
+	} else {
+		result = 0;
+	}
+	publication_end(publication);
+	return result;
+}
+#endif

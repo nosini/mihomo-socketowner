@@ -85,12 +85,12 @@ func observerSpec() (*ebpf.CollectionSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, name := range []string{"publication_faults", "publication_error", "packet_test_evidence"} {
+	for _, name := range []string{"publication_faults", "publication_error", "packet_test_evidence", "reclaim_test_state"} {
 		if spec.Maps[name] != nil {
 			return nil, errors.New("embedded observer object is a fault-injection build")
 		}
 	}
-	for _, name := range []string{"test_publication", "test_packet"} {
+	for _, name := range []string{"test_publication", "test_packet", "test_reclaim"} {
 		if spec.Programs[name] != nil {
 			return nil, errors.New("embedded observer object is a fault-injection build")
 		}

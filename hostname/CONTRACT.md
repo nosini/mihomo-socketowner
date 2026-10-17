@@ -1,5 +1,8 @@
 # Optional hostname contract v1
 
+This is the frozen profile-1 contract. The current reader and observer use
+[profile 2](PROFILE2.md), which explicitly changes guard reclamation obligations.
+
 This contract is independent of [socket-owner map ABI 1](../docs/map-interface.md).
 Enabling or updating it must not change the owner maps, their version marker,
 process-lookup configuration, Mihomo's capabilities or network protection.

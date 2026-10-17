@@ -34,7 +34,7 @@ func runBootstrapVMAttacker(t *testing.T, config authorityVMConfig, enc *json.En
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(time.Second))
-	h := bootstrapHeader{Kind: 1, Nonce: [16]byte{1}}
+	h := bootstrapHeader{Kind: 1, Profile: 2, Nonce: [16]byte{1}}
 	data, rights := h.encode(), []byte(nil)
 	file, err := os.Open("/dev/null")
 	if err != nil {
@@ -45,7 +45,9 @@ func runBootstrapVMAttacker(t *testing.T, config authorityVMConfig, enc *json.En
 	case "version":
 		data[8] = 2
 	case "profile":
-		data[64] = 2
+		data[64] = 3
+	case "legacy-profile":
+		data[64] = 1
 	case "kind":
 		data[10] = 2
 	case "zero-nonce":
@@ -133,7 +135,9 @@ func runBootstrapVMFake(t *testing.T, config authorityVMConfig, enc *json.Encode
 	case "version":
 		data[8] = 2
 	case "profile":
-		data[64] = 2
+		data[64] = 3
+	case "legacy-profile":
+		data[64] = 1
 	case "missing":
 		fds = fds[:3]
 	case "extra":
@@ -316,7 +320,7 @@ func TestVMBootstrapProtocolDenials(t *testing.T) {
 	root, pins := bootstrapVMRoot(t)
 	f := newFixtureSetup(t, "tcp4", true, "", false)
 	a, ready := bootstrapVMEpoch(t, f, root, pins, "")
-	for _, attack := range []string{"version", "profile", "kind", "zero-nonce", "instance", "map", "count", "extra", "rights", "stall"} {
+	for _, attack := range []string{"version", "profile", "legacy-profile", "kind", "zero-nonce", "instance", "map", "count", "extra", "rights", "stall"} {
 		t.Run(attack, func(t *testing.T) {
 			h := startAuthorityVMProcess(t, "bootstrap-attacker", nil)
 			h.exchange(t, authorityVMConfig{Endpoint: ready.Endpoint, Attack: attack})
@@ -327,7 +331,7 @@ func TestVMBootstrapProtocolDenials(t *testing.T) {
 }
 
 func TestVMBootstrapRejectsBadPublisher(t *testing.T) {
-	for _, attack := range []string{"nonce", "version", "profile", "missing", "extra", "truncated-rights", "wrong-type"} {
+	for _, attack := range []string{"nonce", "version", "profile", "legacy-profile", "missing", "extra", "truncated-rights", "wrong-type"} {
 		t.Run(attack, func(t *testing.T) {
 			root, _ := bootstrapVMRoot(t)
 			endpoint := filepath.Join(root, "bootstrap.sock")

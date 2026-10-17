@@ -1,5 +1,9 @@
 # Socket lifetime and observer sessions
 
+The current [profile-2 reclamation follow-up](RECLAMATION.md) supersedes the
+permanent-allocation limit described in this historical experiment. Live guards
+remain monotonic; only final release plus drained callback leases permits deletion.
+
 The live-send reader now rejects retained hostname records after socket release,
 TCP closure or loss of its original observer session. A new socket reusing the
 same tuple cannot inherit a retired socket's name. Stop/restart creates a fresh

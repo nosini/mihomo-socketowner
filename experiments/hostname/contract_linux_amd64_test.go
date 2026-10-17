@@ -63,3 +63,19 @@ type contractMember struct {
 	name         string
 	offset, size int
 }
+
+func TestReclaimProfileEnvelope(t *testing.T) {
+	h := bootstrapHeader{Kind: 2, Count: 4, Profile: 2}
+	wire := h.encode()
+	if wire[64] != 2 {
+		t.Fatalf("wrong profile: %x", wire)
+	}
+	got, err := decodeBootstrap(wire)
+	if err != nil || got != h {
+		t.Fatalf("reclaim envelope: %+v, %v", got, err)
+	}
+	wire[64] = 3
+	if _, err := decodeBootstrap(wire); err == nil {
+		t.Fatal("unknown profile accepted")
+	}
+}

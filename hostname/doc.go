@@ -1,5 +1,6 @@
 // Package hostname reads optional application hostname evidence from a trusted
-// socketowner observer using hostname protocol v1, layout profile 1.
+// socketowner observer using hostname protocol v1, layout profile 2
+// (final-release guard reclamation).
 //
 // A candidate is tentative. Call Validate after evaluating rules and immediately
 // before committing the route; fall back to ordinary routing on any error.
@@ -16,7 +17,8 @@ import (
 )
 
 const ProtocolVersion = 1
-const LayoutProfile = 1
+const LayoutProfile = 1 // frozen historical profile
+const ReclaimProfile = 2
 
 // ErrUnavailable means the observer session cannot authorize a name. All errors
 // from this package require ordinary routing fallback; error text is diagnostic.

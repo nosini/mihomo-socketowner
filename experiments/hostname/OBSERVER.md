@@ -112,9 +112,10 @@ Revocation always comes first: an already connected reader returns unknown
 before any program is detached. Each start is a new instance with new maps.
 Sockets the target opened earlier stay unknown, including their first send.
 
-The send-guard table has 256 entries that are never reclaimed. The target's
-257th TCP socket therefore ends the instance. Restarting the observer, for
-example with `Restart=on-failure`, gives it a fresh table; connections meanwhile
+The profile-2 send-guard table has 256 entries, reclaimed only after final
+socket-file release and after older guard-pointer callbacks drain. The target's
+257th concurrently retained TCP socket therefore ends the instance. Restarting
+the observer, for example with `Restart=on-failure`, gives it a fresh table; connections meanwhile
 use Mihomo's ordinary routing.
 
 Startup recovery and `cleanup` use the journal described in
@@ -165,7 +166,8 @@ test binaries built with the race detector:
   privileges; the service has a separate restricted domain and capability set.
 - Finding targets by itself. One observer follows one PID; a different
   OpenSSL build, Flatpak runtime or statically linked program is unsupported.
-- Reclaiming send guards without a restart.
+- Broader send coverage beyond the sole first write. Final-release guard
+  reclamation is now covered by [profile 2](RECLAMATION.md).
 - Published releases of the [separate reader module](../../hostname/README.md).
   Its v1 contract now freezes the existing bootstrap/profile layout.
 - `exec` by the target is not detected. After it, libraries normally load at

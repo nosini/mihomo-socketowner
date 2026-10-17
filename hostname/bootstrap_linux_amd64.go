@@ -25,6 +25,7 @@ type bootstrapHeader struct {
 	Nonce    [16]byte
 	Instance [16]byte
 	Manifest authorityManifest
+	Profile  uint32 // zero preserves the frozen profile-1 golden envelope
 }
 
 func (h bootstrapHeader) encode() []byte {
@@ -38,15 +39,22 @@ func (h bootstrapHeader) encode() []byte {
 	for i, id := range h.Manifest.Maps {
 		binary.LittleEndian.PutUint32(b[48+i*4:], uint32(id))
 	}
-	binary.LittleEndian.PutUint32(b[64:], LayoutProfile) // v1 sole-first-send layout
+	profile := h.Profile
+	if profile == 0 {
+		profile = 1
+	}
+	binary.LittleEndian.PutUint32(b[64:], profile)
 	return b
 }
 
 func decodeBootstrap(b []byte) (bootstrapHeader, error) {
 	var h bootstrapHeader
 	if len(b) != bootstrapBytes || !bytes.Equal(b[:8], bootstrapMagic[:]) || binary.LittleEndian.Uint16(b[8:]) != ProtocolVersion ||
-		binary.LittleEndian.Uint16(b[12:]) != 0 || binary.LittleEndian.Uint32(b[64:]) != LayoutProfile || !bytes.Equal(b[68:], make([]byte, 12)) {
+		binary.LittleEndian.Uint16(b[12:]) != 0 || (binary.LittleEndian.Uint32(b[64:]) != 1 && binary.LittleEndian.Uint32(b[64:]) != 2) || !bytes.Equal(b[68:], make([]byte, 12)) {
 		return h, errors.New("incompatible hostname bootstrap envelope")
+	}
+	if binary.LittleEndian.Uint32(b[64:]) == 2 {
+		h.Profile = 2
 	}
 	h.Kind, h.Count = binary.LittleEndian.Uint16(b[10:]), binary.LittleEndian.Uint16(b[14:])
 	copy(h.Nonce[:], b[16:32])
@@ -151,7 +159,7 @@ func receiveAuthority(c *net.UnixConn, deadline time.Time) (_ *authorityReader, 
 		return nil, instance, err
 	}
 	defer unix.Close(pidfd)
-	request := bootstrapHeader{Kind: 1}
+	request := bootstrapHeader{Kind: 1, Profile: 2}
 	if _, err := rand.Read(request.Nonce[:]); err != nil {
 		return nil, instance, err
 	}
@@ -164,7 +172,7 @@ func receiveAuthority(c *net.UnixConn, deadline time.Time) (_ *authorityReader, 
 		return nil, instance, err
 	}
 	h, err := decodeBootstrap(data)
-	if err != nil || h.Kind != 2 || h.Count != 4 || len(fds) != 4 || h.Nonce != request.Nonce || h.Instance == [16]byte{} {
+	if err != nil || h.Profile != request.Profile || h.Kind != 2 || h.Count != 4 || len(fds) != 4 || h.Nonce != request.Nonce || h.Instance == [16]byte{} {
 		return nil, instance, errors.New("invalid hostname bootstrap response")
 	}
 	var maps [4]*ebpf.Map

@@ -44,7 +44,7 @@ func TestBootstrapEnvelope(t *testing.T) {
 		{"magic", func(b []byte) []byte { b[0] ^= 1; return b }},
 		{"version", func(b []byte) []byte { binary.LittleEndian.PutUint16(b[8:], 2); return b }},
 		{"status", func(b []byte) []byte { b[12] = 1; return b }},
-		{"profile", func(b []byte) []byte { b[64] = 2; return b }},
+		{"profile", func(b []byte) []byte { b[64] = 3; return b }},
 		{"reserved", func(b []byte) []byte { b[79] = 1; return b }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,5 +118,21 @@ func TestBootstrapPeerDenial(t *testing.T) {
 	// Authentication happens before reading a request or touching map handles.
 	if err := serveBootstrap(b, uint32(os.Geteuid()+1), [16]byte{1}, nil, time.Now().Add(time.Second)); err == nil {
 		t.Fatal("unauthorized peer reached publication")
+	}
+}
+
+func TestBootstrapRejectsProfile1BeforeGrant(t *testing.T) {
+	a, b := bootstrapSocketPair(t)
+	request := bootstrapHeader{Kind: 1, Nonce: [16]byte{1}} // frozen profile 1
+	if _, err := a.Write(request.encode()); err != nil {
+		t.Fatal(err)
+	}
+	// A nil authority reader proves the incompatible request fails before any
+	// healthy/map access or FD grant. The peer UID is otherwise authorized.
+	if err := serveBootstrap(b, uint32(os.Geteuid()), [16]byte{1}, nil, time.Now().Add(time.Second)); err == nil {
+		t.Fatal("profile-1 request accepted by reclaiming publisher")
+	}
+	if _, fds, err := receiveBootstrap(a); err == nil || len(fds) != 0 {
+		t.Fatalf("incompatible profile received rights: %v %v", fds, err)
 	}
 }

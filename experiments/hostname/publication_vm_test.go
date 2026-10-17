@@ -65,7 +65,7 @@ func (f *fixture) assertRejected(c connection) {
 
 func TestVMPublicationNormalObject(t *testing.T) {
 	f := newFixtureMode(t, "tcp4", true)
-	if f.probe.collection.Maps["publication_faults"] != nil || f.probe.collection.Programs["test_publication"] != nil || f.probe.collection.Maps["packet_test_evidence"] != nil || f.probe.collection.Programs["test_packet"] != nil {
+	if f.probe.collection.Maps["publication_faults"] != nil || f.probe.collection.Programs["test_publication"] != nil || f.probe.collection.Maps["packet_test_evidence"] != nil || f.probe.collection.Programs["test_packet"] != nil || f.probe.collection.Maps["reclaim_test_state"] != nil || f.probe.collection.Programs["test_reclaim"] != nil {
 		t.Fatal("ordinary observer contains fault controls")
 	}
 	if err := f.probe.publication.Update(uint32(0), uint64(0), ebpf.UpdateAny); err == nil {

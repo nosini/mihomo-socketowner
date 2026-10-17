@@ -331,8 +331,7 @@ func TestVMObserverCommandGuardExhaustion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r.f.command("close %d", slot)
-		server.Close()
+		t.Cleanup(func() { server.Close() })
 		select {
 		case <-o.done:
 			exited = true

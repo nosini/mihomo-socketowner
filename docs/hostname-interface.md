@@ -8,3 +8,7 @@ from [socket-owner map ABI 1](map-interface.md), which remains unchanged.
 The [reader documentation](../hostname/README.md) covers API use and release tags.
 The [observer command](../experiments/hostname/OBSERVER.md) remains experimental;
 service confinement and broader traffic coverage are still pending.
+
+The current implementation explicitly uses [profile 2](../hostname/PROFILE2.md)
+for final-release guard reclamation. Profile 1 remains frozen; upgrade the
+optional reader consumer and observer together. No owner-map ABI changes.

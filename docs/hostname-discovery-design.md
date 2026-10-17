@@ -6,7 +6,7 @@ Design and implementation record for optional application hostname discovery.
 | --- | --- |
 | Prepared | 2026-10-14 |
 | Project status | Milestone 1 in progress; experiment authorized and started 2026-10-16 |
-| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration; controlled completed TLS |
+| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration; controlled completed TLS; final-release guard reclamation |
 | Work not completed | Broader send/reinjection coverage; browser workloads and production measurements |
 | Intended reader | An agent returning to this workspace without the original conversation |
 
@@ -643,3 +643,8 @@ pin the relevant source versions when implementing an adapter.
   HTTP/2 connection reuse across origins.
 - [Linux perf security documentation](https://docs.kernel.org/admin-guide/perf-security.html):
   observability privileges and `CAP_PERFMON`.
+
+The [profile-2 reclamation follow-up](../experiments/hostname/RECLAMATION.md)
+reclaims final-released sockets only after callback leases drain, without
+changing the frozen profile-1 contract. Capacity now bounds concurrent retained
+sockets rather than every socket ever created by an instance.

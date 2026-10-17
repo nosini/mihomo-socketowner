@@ -145,10 +145,9 @@ func TestVMSendGuardCapacity(t *testing.T) {
 	f.command("handshake %d", old.slot)
 	for i := 0; i < 255; i++ {
 		c := f.open("unused.test", "fd-first", "fd")
-		f.command("close %d", c.slot)
-		c.server.Close()
+		t.Cleanup(func() { c.server.Close() })
 	}
-	// Guard entries are never evicted or deleted, including closed sockets.
+	// Hold 256 sockets open: only final release can reclaim a guard.
 	// Capacity exhaustion invalidates the collection instead of forgetting
 	// that another live socket has already made multiple send attempts.
 	c := f.accepted(f.command("open overflow.test fd-first fd"))

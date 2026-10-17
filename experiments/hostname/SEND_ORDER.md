@@ -1,5 +1,9 @@
 # Excluding ambiguous send ordering
 
+The current [profile-2 reclamation follow-up](RECLAMATION.md) supersedes the
+permanent-allocation limit described in this historical experiment. Live guards
+remain monotonic; only final release plus drained callback leases permits deletion.
+
 The live-send experiment now permanently rejects hostname results after a
 socket's second send attempt. This is a conservative coverage restriction, not
 general support for concurrent writes. It prevents a later send's hostname from
