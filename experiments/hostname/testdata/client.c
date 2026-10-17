@@ -8,6 +8,9 @@
 #include <linux/sockios.h>
 #include <netinet/tcp.h>
 #include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <poll.h>
+#include <time.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +20,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-struct connection { SSL *ssl; int fd; int used; } connections[128];
+struct connection { SSL *ssl; int fd; int used; char pin[65]; } connections[128];
 static SSL_CTX *ctx;
 static int family, port;
 static const char *address;
@@ -94,6 +97,78 @@ static void *handshake(void *arg)
 	printf("handshake %d %d %d\n", i, ret, SSL_get_error(connections[i].ssl, ret));
 	return NULL;
 }
+// Only the full-TLS fixture uses these bounded retries. The old commands keep
+// their single-call behavior for send-order and attribution regression tests.
+static int64_t monotonic_ms(void)
+{
+	struct timespec now;
+	check(clock_gettime(CLOCK_MONOTONIC, &now) == 0, "clock");
+	return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+static int retry_tls(struct connection *c, int error, int64_t deadline)
+{
+	if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE) return 0;
+	for (;;) {
+		int64_t remaining = deadline - monotonic_ms();
+		if (remaining <= 0) return 0;
+		struct pollfd fd = {.fd = c->fd, .events = error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT};
+		int ret = poll(&fd, 1, (int)remaining);
+		if (ret < 0 && errno == EINTR) continue;
+		return ret > 0;
+	}
+}
+static void exchange(int i)
+{
+	struct connection *c = &connections[i];
+	int64_t deadline = monotonic_ms() + 5000;
+	int ret, error;
+	do {
+		ERR_clear_error();
+		ret = SSL_connect(c->ssl);
+		error = SSL_get_error(c->ssl, ret);
+	} while (ret != 1 && retry_tls(c, error, deadline));
+	if (ret != 1) {
+		printf("exchange %d handshake-failed %ld\n", i, SSL_get_verify_result(c->ssl));
+		return;
+	}
+	// Check the exact peer certificate before sending application data. The
+	// private test CA is loaded only into this client, never the system store.
+	X509 *peer = SSL_get1_peer_certificate(c->ssl);
+	unsigned char digest[EVP_MAX_MD_SIZE];
+	unsigned int length = 0;
+	check(peer && X509_digest(peer, EVP_sha256(), digest, &length) == 1 && length == 32, "peer digest");
+	X509_free(peer);
+	char pin[65];
+	for (unsigned int n = 0; n < length; n++) snprintf(pin + n * 2, 3, "%02x", digest[n]);
+	if (strcmp(c->pin, pin)) {
+		printf("exchange %d pin-failed\n", i);
+		return;
+	}
+	static const char request[] = "hostname-fixture-request\n";
+	static const char response[] = "hostname-fixture-response\n";
+	size_t written = 0;
+	do {
+		ERR_clear_error();
+		ret = SSL_write_ex(c->ssl, request, sizeof(request) - 1, &written);
+		error = SSL_get_error(c->ssl, ret);
+	} while (ret != 1 && retry_tls(c, error, deadline));
+	check(ret == 1 && written == sizeof(request) - 1, "TLS request");
+	char received[sizeof(response) - 1];
+	size_t offset = 0;
+	while (offset < sizeof(received)) {
+		size_t count = 0;
+		ERR_clear_error();
+		ret = SSL_read_ex(c->ssl, received + offset, sizeof(received) - offset, &count);
+		error = SSL_get_error(c->ssl, ret);
+		if (ret != 1) {
+			check(retry_tls(c, error, deadline), "TLS response");
+			continue;
+		}
+		offset += count;
+	}
+	check(!memcmp(received, response, sizeof(received)), "TLS response bytes");
+	printf("exchange %d ok %s\n", i, SSL_get_version(c->ssl));
+}
 struct parallel_send { int slot, error; pthread_barrier_t *barrier; };
 static void *parallel_handshake(void *arg)
 {
@@ -154,7 +229,25 @@ int main(int argc, char **argv)
 		}
 		check(sscanf(line, "%*s %d", &i) == 1 && i >= 0 && i < 128 && connections[i].used, "slot");
 		struct connection *c = &connections[i];
-		if (!strcmp(op, "handshake")) {
+		if (!strcmp(op, "verify")) {
+			char ca[512], hostname[256], pin[65];
+			int version;
+			check(sscanf(line, "%*s %*d %511s %255s %64s %d", ca, hostname, pin, &version) == 4, "verify");
+			check(strlen(pin) == 64 && (version == 12 || version == 13), "verify arguments");
+			X509_STORE *store = X509_STORE_new();
+			check(store && X509_STORE_load_locations(store, ca, NULL) == 1, "test CA");
+			check(SSL_set1_verify_cert_store(c->ssl, store) == 1, "connection trust store");
+			X509_STORE_free(store);
+			SSL_set_verify(c->ssl, SSL_VERIFY_PEER, NULL);
+			check(SSL_set1_host(c->ssl, hostname) == 1, "verified hostname");
+			int protocol = version == 12 ? TLS1_2_VERSION : TLS1_3_VERSION;
+			check(SSL_set_min_proto_version(c->ssl, protocol) == 1 &&
+			      SSL_set_max_proto_version(c->ssl, protocol) == 1, "TLS version");
+			memcpy(c->pin, pin, sizeof(pin));
+			puts("ok");
+		} else if (!strcmp(op, "exchange")) {
+			exchange(i);
+		} else if (!strcmp(op, "handshake")) {
 			handshake(&i);
 		} else if (!strcmp(op, "cork-one") || !strcmp(op, "ack")) {
 			int one = 1;
