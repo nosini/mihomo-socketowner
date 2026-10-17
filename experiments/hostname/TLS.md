@@ -27,12 +27,22 @@ For both IPv4 and IPv6, the matrix fixes TLS 1.2 or TLS 1.3 and checks:
 
 The [profile-3 extension](RETRIES.md) adds, for both TLS versions, a
 ClientHello larger than the historical 4 KiB limit and an exchange whose
-ClientHello needs real nonblocking retries. Each IP-family run therefore has
+ClientHello needs real nonblocking retries. Each default TUN IP-family run has
 forty-one TLS connections: thirty-three successful application exchanges and
 eight deliberate certificate/hostname/pin rejections, including the TUN and
 resumption cases below. It also reruns the service confinement,
 missing/stale registration, kill-switch, restart, disable/re-enable and
 target-exit checks with SELinux enforcing.
+
+The service harness's `--auto-redirect` mode runs the remote-server and
+resumption groups through the actual local nftables redirect listener, which
+supplies REDIR metadata. Eight additional cases check certificate, hostname and
+pin behavior for both TLS versions there: forty-nine completed TLS connections
+per family (thirty-five successful application connections, fourteen deliberate
+rejections). A separate two-ClientHello collision group checks different
+names/destinations at one requested source port and real NAT source-port remapping.
+The original loopback REDIRECT groups remain in this matrix. See [TUN and
+auto-redirect coverage](TUN.md) for the interception scope.
 
 ## TUN session resumption and SSL reuse
 
@@ -107,6 +117,24 @@ within a separate five-second deadline and half-closes TCP. `reopen` requires
 that clean shutdown, calls `SSL_clear`, clears the previous session and name,
 and binds the same SSL object to a new TCP socket. It does not imply resumption;
 use `resume` separately. All older commands keep their original behavior.
+
+The shutdown fixture retries a zero `SSL_shutdown` result immediately within
+its deadline. Only a negative WANT_READ/WANT_WRITE result waits on socket
+readiness; zero is progress and can precede consumption of a buffered peer
+alert. `testdata/shutdown_test.c` is a deterministic API-contract regression for
+that distinction and both I/O directions. It fails with the earlier loop.
+Compile it from this experiment directory, placing output in a task build folder:
+
+```sh
+gcc -O2 -g -Wall -Wextra -Werror testdata/shutdown_test.c \
+  -o /path/to/build/hostname-shutdown.test \
+  -Wl,--wrap=SSL_shutdown,--wrap=SSL_get_error,--wrap=poll,--wrap=shutdown \
+  -lssl -lcrypto -pthread
+/path/to/build/hostname-shutdown.test
+```
+
+This regression simulates only the shutdown API contract; the service matrices
+exercise actual TLS shutdown and resumption over the network.
 
 The harness creates ephemeral test certificates in its run directory. Trust is
 never added to the system store. Only the client and fixture server handle TLS

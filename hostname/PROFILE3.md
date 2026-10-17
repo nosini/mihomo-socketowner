@@ -95,8 +95,9 @@ The adapter remains specific to the hashed OpenSSL 3.5.3 x86-64-v3/libc build
 and one target process described in [OBSERVER.md](../experiments/hostname/OBSERVER.md).
 Direct and local TCP REDIRECT and Mihomo's TUN system stack are tested for
 IPv4/IPv6; the TUN case keys the flow by the original tuple in the device's
-namespace (see [TUN.md](../experiments/hostname/TUN.md)). This does not add
-auto-redirect, the gvisor stack, TPROXY, UDP/QUIC, multi-application discovery,
+namespace (see [TUN.md](../experiments/hostname/TUN.md)). Local nftables
+auto-redirect is also tested using the accepted post-NAT REDIR flow. This does
+not add the gvisor native stack, TPROXY, UDP/QUIC, multi-application discovery,
 browser/NSS support, ECH-inner names, HelloRetryRequest handling or general
 later-write attribution.
 See [retry validation](../experiments/hostname/RETRIES.md) for frame paths and

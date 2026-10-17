@@ -6,7 +6,7 @@ Design and implementation record for optional application hostname discovery.
 | --- | --- |
 | Prepared | 2026-10-14 |
 | Project status | Milestone 1 in progress; experiment authorized and started 2026-10-16 |
-| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration; controlled completed TLS; final-release guard reclamation; larger initial ClientHellos and verified retries; TUN system-stack lookup; controlled TLS ticket resumption and SSL reuse |
+| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration; controlled completed TLS; final-release guard reclamation; larger initial ClientHellos and verified retries; TUN system-stack lookup; controlled TLS ticket resumption and SSL reuse; local nftables auto-redirect validation |
 | Work not completed | Broader send/reinjection coverage; browser workloads and production measurements |
 | Intended reader | An agent returning to this workspace without the original conversation |
 
@@ -663,8 +663,8 @@ The [TUN follow-up](../experiments/hostname/TUN.md) extends native lookup to
 Mihomo's TUN `system`/`mixed` stack for TCP. The flow key is the stack's
 original tuple in the namespace of its accepted kernel socket, which equals the
 application socket's egress key when the application shares the device's
-namespace. `auto-redirect`, the `gvisor` stack, other namespaces, TPROXY and UDP
-stay unknown. Direct VM tests and the confined service with the shipped TUN
+namespace. The `gvisor` native stack, other namespaces, TPROXY and UDP remain
+outside this validated path. Direct VM tests and the confined service with the shipped TUN
 configuration pass for both address families.
 
 The [completed-TLS matrix](../experiments/hostname/TLS.md) also verifies
@@ -674,3 +674,10 @@ families. Both peers prove actual resumption on new SSL objects and after
 observer-stop/restart fallback and resumed pin rejection are covered. No
 observer, reader, Mihomo runtime or profile change was needed. Browser workloads,
 early data, HelloRetryRequest and HTTP/2/cross-origin reuse remain unproved.
+
+Local nftables [auto-redirect](../experiments/hostname/TUN.md) already labels its
+accepted TCP connections REDIR, so its existing post-NAT lookup needs no routing
+change. Direct VM and confined-service tests cover both families, guarded
+fallback, completed TLS/resumption and forced source-port collisions between
+different destinations/names. Previous documentation calling it unknown was
+incorrect. Forwarded/prerouting, bridge and iptables-fallback coverage remain open.

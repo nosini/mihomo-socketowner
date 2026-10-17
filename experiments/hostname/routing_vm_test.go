@@ -25,9 +25,9 @@ import (
 // Private inherited-socket protocol shared with Mihomo's test-only helper.
 // No maps, links, pins or observer authority are transferred to that process.
 type routeVMEvent struct {
-	Kind, Address, Source, Local, Original, Name, Proxy, Host, RuleHost, SniffHost string
-	Netns, Cookie                                                                  uint64
-	ElapsedNS                                                                      int64
+	Kind, Address, Source, Local, Original, Name, Proxy, Host, RuleHost, SniffHost, InboundType string
+	Netns, Cookie                                                                               uint64
+	ElapsedNS                                                                                   int64
 }
 type routeVMReply struct{ Name string }
 
