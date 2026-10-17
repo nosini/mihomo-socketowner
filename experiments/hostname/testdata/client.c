@@ -139,6 +139,11 @@ static void exchange(int i)
 		error = SSL_get_error(c->ssl, ret);
 	} while (ret != 1 && retry_tls(c, error, deadline));
 	if (ret != 1) {
+		if (SSL_get_verify_result(c->ssl) == X509_V_OK) {
+			fprintf(stderr, "TLS handshake failed: ret=%d error=%d pending=%d buffered=%d\n",
+			        ret, error, SSL_pending(c->ssl), SSL_has_pending(c->ssl));
+			ERR_print_errors_fp(stderr);
+		}
 		printf("exchange %d handshake-failed %ld\n", i, SSL_get_verify_result(c->ssl));
 		return;
 	}
@@ -185,12 +190,19 @@ static void shutdown_tls(int i)
 	struct connection *c = &connections[i];
 	int64_t deadline = monotonic_ms() + 5000;
 	int ret, error;
-	do {
+	for (;;) {
 		ERR_clear_error();
 		ret = SSL_shutdown(c->ssl);
-		// Zero means close_notify was sent; the peer's reply is still due.
-		error = ret == 0 ? SSL_ERROR_WANT_READ : SSL_get_error(c->ssl, ret);
-	} while (ret != 1 && retry_tls(c, error, deadline));
+		if (ret == 1) break;
+		// Zero is progress, not a socket-readiness failure. Call again so
+		// OpenSSL can consume a peer alert already buffered in its BIO.
+		if (ret == 0) {
+			if (monotonic_ms() >= deadline) break;
+			continue;
+		}
+		error = SSL_get_error(c->ssl, ret);
+		if (!retry_tls(c, error, deadline)) break;
+	}
 	check(ret == 1, "TLS shutdown");
 	check(shutdown(c->fd, SHUT_WR) == 0, "TCP shutdown");
 	printf("shutdown %d ok\n", i);
