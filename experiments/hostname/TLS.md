@@ -136,6 +136,22 @@ gcc -O2 -g -Wall -Wextra -Werror testdata/shutdown_test.c \
 This regression simulates only the shutdown API contract; the service matrices
 exercise actual TLS shutdown and resumption over the network.
 
+The confined IPv4/IPv6 TUN and local auto-redirect matrices also force TLS 1.3
+HelloRetryRequest with a P-256-only server and a client initially sharing
+X25519. The fixture's `groups` command selects the client group order and
+installs a protocol-message counter; `hello-state` reports sent ClientHellos
+and received HRRs, without retaining message contents or secrets. The server
+must see the unchanged SNI twice. A reversed-preference control sends one
+ClientHello and receives no HRR; forced retries require two and one. Both
+complete verified TLS and repeated application exchanges on the initially
+selected connection/chain. Cases include observer stop after route selection,
+ordinary fallback on a new socket, and wrong-pin rejection without application
+data. No second initial window or new attribution is authorized by HRR.
+
+References: OpenSSL [group selection](https://docs.openssl.org/3.5/man3/SSL_CTX_set1_curves/),
+[message callback](https://docs.openssl.org/3.5/man3/SSL_CTX_set_msg_callback/), and
+[RFC 8446 HRR encoding](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.1.3).
+
 The harness creates ephemeral test certificates in its run directory. Trust is
 never added to the system store. Only the client and fixture server handle TLS
 keys or application bytes; the observer and reader gain no such access.
@@ -143,7 +159,7 @@ keys or application bytes; the observer and reader gain no such access.
 This proves completed TLS for the exact supported OpenSSL profile and controlled
 TCP REDIRECT and system-stack TUN paths. Resumption is tested with TLS tickets
 and the controlled OpenSSL socket-BIO fixture. It does not establish browser
-compatibility, encrypted DNS, ECH, early data, HelloRetryRequest, HTTP/2 or
+compatibility, encrypted DNS, ECH, early data, cookie-only HRR, HTTP/2 or
 cross-origin reuse, other send shapes, TPROXY, throughput or a
 production latency budget. The observer admits only one initial ClientHello
 window and verified retries of its remaining bytes, as defined by

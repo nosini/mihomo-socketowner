@@ -20,7 +20,26 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-struct connection { SSL *ssl; int fd; int used; char pin[65]; } connections[512];
+struct connection { SSL *ssl; int fd; int used; char pin[65]; unsigned client_hellos, hello_retries; } connections[512];
+// Count protocol messages only; never retain handshake contents or secrets.
+static void count_hellos(int writing, int version, int type, const void *data,
+                         size_t length, SSL *ssl, void *arg)
+{
+	(void)version; (void)ssl;
+	struct connection *c = arg;
+	const unsigned char *message = data;
+	// RFC 8446 section 4.1.3: HRR is a ServerHello with this fixed Random.
+	static const unsigned char retry_random[32] = {
+		0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11,
+		0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
+		0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e,
+		0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c
+	};
+	if (type != SSL3_RT_HANDSHAKE || length < 4) return;
+	if (writing && message[0] == SSL3_MT_CLIENT_HELLO) c->client_hellos++;
+	if (!writing && message[0] == SSL3_MT_SERVER_HELLO && length >= 38 &&
+	    !memcmp(message + 6, retry_random, sizeof(retry_random))) c->hello_retries++;
+}
 static SSL_CTX *ctx;
 // One explicitly retained in-memory session for the completed-TLS fixture.
 // No tickets, keys or session serialization are exposed to the observer.
@@ -299,6 +318,17 @@ int main(int argc, char **argv)
 			      SSL_set_max_proto_version(c->ssl, protocol) == 1, "TLS version");
 			memcpy(c->pin, pin, sizeof(pin));
 			puts("ok");
+		} else if (!strcmp(op, "groups")) {
+			char groups[128];
+			check(sscanf(line, "%*s %*d %127s", groups) == 1, "groups");
+			check(SSL_set1_groups_list(c->ssl, groups) == 1, "TLS groups");
+			c->client_hellos = c->hello_retries = 0;
+			SSL_set_msg_callback(c->ssl, count_hellos);
+			SSL_set_msg_callback_arg(c->ssl, c);
+			puts("ok");
+		} else if (!strcmp(op, "hello-state")) {
+			printf("hello-state %d client-hellos %u hello-retries %u\n",
+			       i, c->client_hellos, c->hello_retries);
 		} else if (!strcmp(op, "exchange")) {
 			exchange(i);
 		} else if (!strcmp(op, "shutdown")) {

@@ -672,8 +672,12 @@ TLS 1.2/1.3 ticket resumption through the confined TUN service for both address
 families. Both peers prove actual resumption on new SSL objects and after
 `SSL_clear` onto new sockets. Changed/removed names, a declined ticket,
 observer-stop/restart fallback and resumed pin rejection are covered. No
-observer, reader, Mihomo runtime or profile change was needed. Browser workloads,
-early data, HelloRetryRequest and HTTP/2/cross-origin reuse remain unproved.
+observer, reader, Mihomo runtime or profile change was needed. Controlled TLS 1.3
+key-share HelloRetryRequest also completes through confined IPv4/IPv6 TUN and
+local auto-redirect, preserving the committed connection and route through
+repeated exchanges and observer loss. Message counts distinguish the retry from
+a no-retry control; wrong pins still reject application traffic. Browser
+workloads, early data, cookie-only HRR and HTTP/2/cross-origin reuse remain unproved.
 
 Local nftables [auto-redirect](../experiments/hostname/TUN.md) already labels its
 accepted TCP connections REDIR, so its existing post-NAT lookup needs no routing

@@ -78,6 +78,9 @@ deployment setting.
 This remains one exact OpenSSL adapter and one target. TCP direct/local
 REDIRECT and the [TUN system stack](TUN.md) are tested, including controlled
 [TLS ticket resumption and SSL reuse](TLS.md). No adapter or profile change was
-needed for that resumption coverage. Browser TLS stacks, ECH, early data,
-broader reinjection, multiple initial records, HelloRetryRequest and production
+needed for that resumption coverage. Controlled TLS 1.3 key-share
+HelloRetryRequest also completes through both confined paths with a stable
+committed route; it does not authorize another initial discovery window.
+Browser TLS stacks, ECH, early data, cookie-only HRR, broader reinjection,
+multiple initial records and production
 performance remain open.
