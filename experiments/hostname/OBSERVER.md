@@ -164,6 +164,10 @@ test binaries built with the race detector:
   path and an unsupported profile, each leaving no endpoint, pins or journal.
 - Guard exhaustion: the observer exits 1 after revoking, and a restart serves
   names again.
+- Directed SIGURG interrupts a resident observer thread blocked in target-pidfd
+  ppoll eight times; it must keep serving verified evidence and stop cleanly.
+  Interrupted polls return a negative count with EINTR, not a readiness event.
+  The monitor continues cancellation and health checks after each interruption.
 - The complete earlier VM suite, including the Mihomo routing, reader-commit
   and native lookup matrices, which now share the extracted initialization.
 

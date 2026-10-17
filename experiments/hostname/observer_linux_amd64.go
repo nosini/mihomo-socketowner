@@ -343,8 +343,13 @@ func runObserver(ctx context.Context, c ObserverConfig, expected *registeredTarg
 	for {
 		poll := []unix.PollFd{{Fd: int32(target), Events: unix.POLLIN}}
 		n, err := unix.Poll(poll, 250)
-		if err != nil && !errors.Is(err, unix.EINTR) {
-			return err
+		if err != nil {
+			if !errors.Is(err, unix.EINTR) {
+				return err
+			}
+			// An interrupted poll returns -1, not an event count. Still run
+			// cancellation/health checks below before polling again.
+			n = 0
 		}
 		if n != 0 {
 			if poll[0].Revents&unix.POLLIN == 0 {

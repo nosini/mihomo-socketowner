@@ -198,6 +198,59 @@ func newObserverVMRun(t *testing.T) *observerVMRun {
 		f: newFixtureSetup(t, "tcp4", true, "", false)}
 }
 
+func TestVMObserverInterruptedPoll(t *testing.T) {
+	r := newObserverVMRun(t)
+	o := r.start()
+	pid := o.cmd.Process.Pid
+	// SIGURG is handled by the Go runtime and does not request observer
+	// shutdown. Direct it at a thread blocked in ppoll so the syscall returns
+	// EINTR, rather than hoping a process-wide signal reaches that thread.
+	for interrupted := 0; interrupted < 8; interrupted++ {
+		deadline := time.Now().Add(3 * time.Second)
+		found := false
+		for !found && time.Now().Before(deadline) {
+			select {
+			case <-o.done:
+				t.Fatalf("observer exited on poll interruption: %v: %s", o.err, o.log.String())
+			default:
+			}
+			tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, task := range tasks {
+				state, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/syscall", pid, task.Name()))
+				if err != nil || !strings.HasPrefix(string(state), strconv.Itoa(unix.SYS_PPOLL)+" ") {
+					continue
+				}
+				tid, err := strconv.Atoi(task.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := unix.Tgkill(pid, tid, unix.SIGURG); err != nil {
+					t.Fatal(err)
+				}
+				found = true
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !found {
+			t.Fatal("observer never blocked in ppoll")
+		}
+	}
+	a := r.connect()
+	_, key := a.named(t)
+	if got := a.reader.exchange(t, authorityVMRequest{Command: "lookup", Key: key}); got.Unknown || got.Error != "" {
+		t.Fatalf("observer lost authority after poll interruption: %+v", got)
+	}
+	o.cmd.Process.Signal(syscall.SIGTERM)
+	if err := o.wait(t); err != nil {
+		t.Fatal(err)
+	}
+	r.assertStopped()
+}
+
 func TestVMObserverCommandLifecycle(t *testing.T) {
 	r := newObserverVMRun(t)
 	o := r.start()
