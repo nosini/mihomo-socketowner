@@ -64,13 +64,13 @@ objects keep the expected route and real destination; a cleared name and a
 stopped observer use ordinary routing. Both peers confirm actual resumption,
 and repeated application exchanges retain the committed connection and chain.
 
-The confined IPv6 regressions, in both system-stack and auto-redirect modes,
-exposed an intermittent auto-route failure after a successful handshake: an established application
-socket sent later packets through the uplink instead of the TUN. nft trace
-confirmed the shipped kill switch dropped those packets. This is an unresolved
-transport limitation; successful hostname attribution does not guarantee that
-all later IPv6 traffic keeps its route. Earlier complete IPv6 matrices passed,
-but repeated final runs failed; IPv6 transport is not reliably validated. No firewall allowance was added to bypass the failure.
+The confined IPv6 regressions exposed a sing-tun policy-rule ordering bug,
+fixed in Mihomo's Linux TUN integration without a dependency fork. Its constructor
+moves the blanket known-source bypasses behind the existing TUN-source lookups, so route relookup on a connected
+socket keeps the flow in the TUN. The regression checks known TUN and physical
+sources and reinjected traffic; IPv6 repeated application exchanges flush the
+route cache while keeping the same live TLS connection. No firewall allowance
+or connection retry masks a routing failure.
 
 ## Local auto-redirect
 
