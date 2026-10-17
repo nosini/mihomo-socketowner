@@ -1,12 +1,17 @@
 // Private bounded byte/sequence evidence. No TLS/SNI parsing is used here.
-#define SEND_BYTES_MAX 4096
+#define SEND_BYTES_MAX 16384
 
+struct send_scope_state {
+	__u64 lifetime_ready;
+	__u64 callbacks; // retirement bit and active private-map pointer leases
+};
 struct send_evidence {
 	__u32 sequence;
-	__u32 len; // published last by the sole eligible LSM writer
+	__u32 len; // written once; ready publishes the entire initial window and origin
 	__u8 bytes[SEND_BYTES_MAX];
-	__u64 lifetime_ready;
-	__u64 callbacks; // profile 2: retirement bit and active guard-pointer leases
+	__u64 ssl;
+	__u64 ready; // atomically publish the immutable initial window and origin
+	struct observation origin;
 };
 struct flow_key {
 	__u64 netns;

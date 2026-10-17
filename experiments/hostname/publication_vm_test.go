@@ -65,7 +65,7 @@ func (f *fixture) assertRejected(c connection) {
 
 func TestVMPublicationNormalObject(t *testing.T) {
 	f := newFixtureMode(t, "tcp4", true)
-	if f.probe.collection.Maps["publication_faults"] != nil || f.probe.collection.Programs["test_publication"] != nil || f.probe.collection.Maps["packet_test_evidence"] != nil || f.probe.collection.Programs["test_packet"] != nil || f.probe.collection.Maps["reclaim_test_state"] != nil || f.probe.collection.Programs["test_reclaim"] != nil {
+	if f.probe.collection.Maps["publication_faults"] != nil || f.probe.collection.Programs["test_publication"] != nil || f.probe.collection.Maps["packet_test_evidence"] != nil || f.probe.collection.Programs["test_packet"] != nil || f.probe.collection.Maps["reclaim_test_state"] != nil || f.probe.collection.Programs["test_reclaim"] != nil || f.probe.collection.Maps["retry_test_counts"] != nil {
 		t.Fatal("ordinary observer contains fault controls")
 	}
 	if err := f.probe.publication.Update(uint32(0), uint64(0), ebpf.UpdateAny); err == nil {
@@ -125,7 +125,7 @@ func TestVMPublicationFailedInsertion(t *testing.T) {
 	for _, target := range []struct {
 		name string
 		mask uint64
-	}{{"snapshot", 8}, {"flow", 16}, {"scope", 4}, {"send-guard", 32}} {
+	}{{"snapshot", 8}, {"flow", 16}, {"scope", 4}, {"send-guard", 32}, {"send-window", 1024}} {
 		t.Run(target.name, func(t *testing.T) {
 			f := newPublicationFixture(t, "tcp4")
 			old := f.open("older.test", "fd-first", "fd")

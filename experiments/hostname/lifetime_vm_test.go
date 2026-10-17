@@ -228,7 +228,7 @@ func TestVMObserverProgramReplacement(t *testing.T) {
 }
 
 func TestVMObserverMapReplacement(t *testing.T) {
-	for _, name := range []string{"publication_state", "send_guards", "send_snapshots", "send_flows", "send_scope", "control-pointer"} {
+	for _, name := range []string{"publication_state", "send_guards", "send_snapshots", "send_flows", "send_scope", "send_windows", "empty_window", "control-pointer"} {
 		t.Run(name, func(t *testing.T) {
 			f := newFixtureMode(t, "tcp4", true)
 			disableHandshakeProbe(t, f)

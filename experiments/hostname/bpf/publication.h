@@ -64,6 +64,8 @@ static __always_inline void publication_end(__u64 *state)
 #define FAULT_HOLD_FLOW 64
 #define FAULT_STATE_FLAGS 128
 #define FAULT_GUARD_DELETE 256
+#define FAULT_WINDOW_DELETE 512
+#define FAULT_WINDOW_INSERT 1024
 struct publication_fault {
 	__u64 mask;
 	__u64 initial_state;
@@ -93,6 +95,19 @@ static __always_inline void save_publication_error(long error)
 	__s64 *slot = bpf_map_lookup_elem(&publication_error, &zero);
 	if (slot)
 		*slot = error;
+}
+
+// Diagnostic counters prove that live tests exercise actual kernel retry hooks.
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 3);
+	__type(key, __u32);
+	__type(value, __u64);
+} retry_test_counts SEC(".maps");
+static __always_inline void record_retry_test(__u32 key)
+{
+	__u64 *count = bpf_map_lookup_elem(&retry_test_counts, &key);
+	if (count) __sync_fetch_and_add(count, 1);
 }
 
 // TestRun commands use a synthetic packet's first byte: 1 enters and leaves
@@ -125,6 +140,7 @@ int test_publication(struct __sk_buff *skb)
 	return 0;
 }
 #else
+#define record_retry_test(key) ((void)0)
 #define fault_mask() 0
 #define save_publication_error(error) ((void)0)
 #define FAULT_SEND 1
@@ -136,4 +152,6 @@ int test_publication(struct __sk_buff *skb)
 #define FAULT_HOLD_FLOW 64
 #define FAULT_STATE_FLAGS 128
 #define FAULT_GUARD_DELETE 256
+#define FAULT_WINDOW_DELETE 512
+#define FAULT_WINDOW_INSERT 1024
 #endif

@@ -24,7 +24,7 @@ struct connection { SSL *ssl; int fd; int used; char pin[65]; } connections[512]
 static SSL_CTX *ctx;
 static int family, port;
 static const char *address;
-static int source_port;
+static int source_port, tiny_send;
 static char destination[64];
 static uintptr_t last_freed_ssl;
 static unsigned int reused_objects;
@@ -35,6 +35,11 @@ static int connect_socket(void)
 {
 	int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	check(fd >= 0, "socket");
+	if (tiny_send) {
+		int size = 1024, mss = 512;
+		check(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == 0, "send buffer");
+		check(setsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &mss, sizeof(mss)) == 0, "TCP MSS");
+	}
 	int one = 1;
 	check(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == 0, "reuse address");
 	{ // Keep the source address identical when forcing redirect collisions.
@@ -188,6 +193,14 @@ static long reject_write(BIO *bio, int oper, const char *argp, size_t len,
 	if (oper == BIO_CB_WRITE) return 0;
 	return ret;
 }
+// Deliberately corrupt a pending BIO buffer in a negative retry test.
+static long mutate_write(BIO *bio, int oper, const char *argp, size_t len,
+                         int argi, long argl, int ret, size_t *processed)
+{
+	(void)bio; (void)argi; (void)argl; (void)processed;
+	if (oper == BIO_CB_WRITE && len) ((unsigned char *)argp)[0] ^= 1;
+	return ret;
+}
 int main(int argc, char **argv)
 {
 	check(argc == 4, "arguments: client 4|6 destination port");
@@ -201,6 +214,10 @@ int main(int argc, char **argv)
 	while (fgets(line, sizeof(line), stdin)) {
 		int i = -1;
 		check(sscanf(line, "%31s", op) == 1, "command");
+		if (!strcmp(op, "tiny-send") || !strcmp(op, "normal-send")) {
+	  tiny_send = !strcmp(op, "tiny-send");
+	  puts("ok"); continue;
+		}
 		if (!strcmp(op, "source")) {
 			check(sscanf(line, "%*s %d", &source_port) == 1, "source port");
 			puts("ok"); continue;
@@ -301,13 +318,19 @@ int main(int argc, char **argv)
 			size_t written = 0;
 			int ret = SSL_write_ex(c->ssl, "x", 1, &written);
 			printf("implicit %d %d %d\n", i, ret, SSL_get_error(c->ssl, ret));
-		} else if (!strcmp(op, "large-alpn")) {
-			unsigned char protocols[4096];
-			for (int n = 0; n < 16; n++) {
+		} else if (!strcmp(op, "small-send")) {
+			int size = 1024, mss = 512;
+			check(setsockopt(c->fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == 0, "send buffer");
+			check(setsockopt(c->fd, IPPROTO_TCP, TCP_MAXSEG, &mss, sizeof(mss)) == 0, "TCP MSS");
+			puts("ok");
+		} else if (!strcmp(op, "large-alpn") || !strcmp(op, "retry-alpn") || !strcmp(op, "oversize-alpn")) {
+			unsigned char protocols[16384];
+			int count = !strcmp(op, "large-alpn") ? 16 : !strcmp(op, "retry-alpn") ? 40 : 64;
+			for (int n = 0; n < count; n++) {
 				protocols[n * 256] = 255;
-				memset(&protocols[n * 256 + 1], 'a' + n, 255);
+				memset(&protocols[n * 256 + 1], 'a' + n % 26, 255);
 			}
-			check(SSL_set_alpn_protos(c->ssl, protocols, sizeof(protocols)) == 0, "large ALPN");
+			check(SSL_set_alpn_protos(c->ssl, protocols, count * 256) == 0, "large ALPN");
 			puts("ok");
 		} else if (!strcmp(op, "alias")) {
 			check(sscanf(line, "%*s %*d %511s", name) == 1, "alias");
@@ -329,6 +352,13 @@ int main(int argc, char **argv)
 				check(write(c->fd, "x", 1) == 1, "raw write");
 			}
 			puts("ok");
+		} else if (!strcmp(op, "rename")) {
+	  check(sscanf(line, "%*s %*d %511s", name) == 1, "rename");
+	  check(SSL_set_tlsext_host_name(c->ssl, name) == 1, "rename hostname");
+	  puts("ok");
+		} else if (!strcmp(op, "mutate-write")) {
+	  BIO_set_callback_ex(SSL_get_wbio(c->ssl), mutate_write);
+	  puts("ok");
 		} else if (!strcmp(op, "fail")) {
 			BIO_set_callback_ex(SSL_get_wbio(c->ssl), reject_write);
 			handshake(&i);

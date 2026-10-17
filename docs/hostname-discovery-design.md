@@ -6,7 +6,7 @@ Design and implementation record for optional application hostname discovery.
 | --- | --- |
 | Prepared | 2026-10-14 |
 | Project status | Milestone 1 in progress; experiment authorized and started 2026-10-16 |
-| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration; controlled completed TLS; final-release guard reclamation |
+| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing; resident observer command; optional v1 reader contract/module; optional service integration; controlled completed TLS; final-release guard reclamation; larger initial ClientHellos and verified retries |
 | Work not completed | Broader send/reinjection coverage; browser workloads and production measurements |
 | Intended reader | An agent returning to this workspace without the original conversation |
 
@@ -648,3 +648,13 @@ The [profile-2 reclamation follow-up](../experiments/hostname/RECLAMATION.md)
 reclaims final-released sockets only after callback leases drain, without
 changing the frozen profile-1 contract. Capacity now bounds concurrent retained
 sockets rather than every socket ever created by an instance.
+
+The [profile-3 retry follow-up](../experiments/hostname/RETRIES.md) admits one
+complete initial ClientHello record of at most 16 KiB and verified same-SSL/name
+retries within its immutable remaining bytes. It retains final-release callback
+leases and the 256-retained-lifetime bound, with a preallocated private byte
+hash and small socket storage. Unsupported later attempts still permanently
+exclude the socket. Historical profile-1/profile-2 contracts remain frozen;
+upgrade both bootstrap peers together. Large and actual short-write TLS 1.2/1.3
+exchanges pass through the confined services for both address families. This
+does not add browser TLS adapters, ECH-inner names or new interception modes.

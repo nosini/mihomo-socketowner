@@ -1,7 +1,8 @@
 # Optional hostname contract v1
 
 This is the frozen profile-1 contract. The current reader and observer use
-[profile 2](PROFILE2.md), which explicitly changes guard reclamation obligations.
+[profile 3](PROFILE3.md), which incorporates [profile-2 reclamation](PROFILE2.md)
+and explicitly changes initial-write/retry obligations.
 
 This contract is independent of [socket-owner map ABI 1](../docs/map-interface.md).
 Enabling or updating it must not change the owner maps, their version marker,

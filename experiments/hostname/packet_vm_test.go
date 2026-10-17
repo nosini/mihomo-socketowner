@@ -16,13 +16,13 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-const sendBytesMax = 4096
+const sendBytesMax = 16384
 
 type sendEvidence struct {
 	Sequence, Len uint32
 	Bytes         [sendBytesMax]byte
-	LifetimeReady uint64
-	Callbacks     uint64
+	SSL, Ready    uint64
+	Origin        observation
 }
 
 // Socket-filter TestRun consumes the Ethernet header before executing BPF.
@@ -316,11 +316,11 @@ func TestVMPacketCaptureLimit(t *testing.T) {
 			f := newFixtureMode(t, network, true)
 			disableHandshakeProbe(t, f)
 			c := f.open("large.test", "fd-first", "fd")
-			f.command("large-alpn %d", c.slot)
+			f.command("oversize-alpn %d", c.slot)
 			f.command("handshake %d", c.slot)
-			var raw flowObservation
-			if err := f.probe.collection.Maps["send_flows"].Lookup(f.flowKey(c), &raw); err != nil || raw.PayloadLen <= sendBytesMax {
-				t.Fatalf("test did not emit an oversized first write: %d, %v", raw.PayloadLen, err)
+			var window sendEvidence
+			if err := f.probe.collection.Maps["send_windows"].Lookup(c.cookie, &window); err != nil || window.Len != 0 || window.Ready != 0 {
+				t.Fatalf("oversized first record captured: len=%d ready=%d err=%v", window.Len, window.Ready, err)
 			}
 			f.assertSendAmbiguous(c)
 			if name := wireName(t, c); name != "large.test" {

@@ -1,5 +1,10 @@
 # Protocol 1, profile 2: final-release guard reclamation
 
+This is the frozen historical profile-2 specification. The current reader and
+observer require [profile 3](PROFILE3.md), which adds an immutable initial
+ClientHello window and bounded retries. References below to the current reader
+and publisher describe the profile-2 implementation.
+
 Profile 2 replaces profile 1's permanent guard allocation with safe reclamation
 at final socket-file release. All protocol-1 envelope fields, authentication,
 map shapes, record bytes, publication control, authority lifetime and reader

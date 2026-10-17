@@ -1,5 +1,10 @@
 # Matching the observed write to emitted TCP bytes
 
+The current [profile-3 follow-up](RETRIES.md) supersedes this historical
+sole-write/4 KiB restriction with one immutable ClientHello window and verified
+retries within its remaining bytes. The earlier evidence and limits below
+describe the original experiment.
+
 The live-send experiment now copies a hostname into a flow record only when
 the packet's payload exactly matches bytes captured from the sole eligible
 write, at the corresponding TCP sequence position. Control packets publish

@@ -2,16 +2,18 @@
 
 This Go module reads application hostname evidence from a separately installed
 `mihomo-hostname-observer`. It implements protocol 1,
-[layout profile 2](PROFILE2.md), building on the frozen
+[layout profile 3](PROFILE3.md), building on the frozen
 [profile-1 contract](CONTRACT.md). It has no dependency on socketowner's loader
 or experiment Go packages, and does not install or start either privileged executable.
 
 The feature remains experimental: one exact OpenSSL build, one target process,
-TCP, a sole first send of at most 4096 bytes, and 256 concurrently retained
-socket guards per observer instance. Final release reclaims a slot. It does not
+TCP, one initial ClientHello record of at most 16 KiB with verified same-SSL/name
+retries inside its remaining bytes, and 256 concurrently retained socket guards
+per observer instance. Final release reclaims a slot. It does not
 provide ECH inner names or browser support. A confined optional service is
 available separately; broader transport coverage remains open. Upgrades from
-profile 1 require rebuilding the optional consumer and observer together; mismatched profiles return unknown.
+profiles 1 or 2 require rebuilding the optional consumer and observer together;
+mismatched profiles return unknown.
 
 ## Using the reader
 

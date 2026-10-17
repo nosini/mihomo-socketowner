@@ -152,34 +152,39 @@ func TestVMReclaimOrphanedOutput(t *testing.T) {
 	}
 }
 func TestVMReclaimDeleteFailure(t *testing.T) {
-	f := newPublicationFixture(t, "tcp4")
-	c, key := namedLifetimeSocket(t, f)
-	f.fault(publicationFault{Mask: 64 | 256})
-	f.command("close %d", c.slot)
-	f.assertPublicationFailed()
-	var kernelError int64
-	if err := f.probe.collection.Maps["publication_error"].Lookup(uint32(0), &kernelError); err != nil || kernelError != -int64(unix.ENOENT) {
-		t.Fatalf("not a real delete error: %d %v", kernelError, err)
-	}
-	assertRetainedName(t, f.probe, key, c.cookie)
-	f.assertRejected(c)
-	var fresh connection
-	line := f.command("open fallback.test fd-first fd")
-	if _, err := fmt.Sscanf(line, "socket %d %d %d %d", &fresh.slot, &fresh.cookie, &fresh.fd, &fresh.localPort); err != nil {
-		t.Fatal(err)
-	}
-	f.listener.SetDeadline(time.Now().Add(time.Second))
-	var err error
-	fresh.server, err = f.listener.AcceptTCP()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer fresh.server.Close()
-	f.command("handshake %d", fresh.slot)
-	if wireName(t, fresh) != "fallback.test" {
-		t.Fatal("delete failure interrupted TLS")
+	for _, mask := range []uint64{256, 512} {
+		t.Run(fmt.Sprint(mask), func(t *testing.T) {
+			f := newPublicationFixture(t, "tcp4")
+			c, key := namedLifetimeSocket(t, f)
+			f.fault(publicationFault{Mask: 64 | mask})
+			f.command("close %d", c.slot)
+			f.assertPublicationFailed()
+			var kernelError int64
+			if err := f.probe.collection.Maps["publication_error"].Lookup(uint32(0), &kernelError); err != nil || kernelError != -int64(unix.ENOENT) {
+				t.Fatalf("not a real delete error: %d %v", kernelError, err)
+			}
+			assertRetainedName(t, f.probe, key, c.cookie)
+			f.assertRejected(c)
+			var fresh connection
+			line := f.command("open fallback.test fd-first fd")
+			if _, err := fmt.Sscanf(line, "socket %d %d %d %d", &fresh.slot, &fresh.cookie, &fresh.fd, &fresh.localPort); err != nil {
+				t.Fatal(err)
+			}
+			f.listener.SetDeadline(time.Now().Add(time.Second))
+			var err error
+			fresh.server, err = f.listener.AcceptTCP()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer fresh.server.Close()
+			f.command("handshake %d", fresh.slot)
+			if wireName(t, fresh) != "fallback.test" {
+				t.Fatal("delete failure interrupted TLS")
+			}
+		})
 	}
 }
+
 func TestVMReclaimObserverChurn(t *testing.T) {
 	r := newObserverVMRun(t)
 	observer := r.start()

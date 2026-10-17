@@ -1,7 +1,7 @@
 package hostname
 
-// Hostname protocol v1/profile 2; historical profile 1 remains frozen in
-// hostname/CONTRACT.md. Reclamation obligations are in hostname/PROFILE2.md.
+// Hostname protocol v1/profile 3; historical profiles remain frozen in
+// hostname/CONTRACT.md and PROFILE2.md; current obligations are in PROFILE3.md.
 // This contract is deliberately separate from the owner-map ABI.
 // The socket-creating process is also the observer/cleanup owner. Socket
 // activation, descriptor delegation and alternate PID namespaces are excluded.
@@ -56,11 +56,11 @@ func (h bootstrapHeader) encode() []byte {
 func decodeBootstrap(b []byte) (bootstrapHeader, error) {
 	var h bootstrapHeader
 	if len(b) != bootstrapBytes || !bytes.Equal(b[:8], bootstrapMagic[:]) || binary.LittleEndian.Uint16(b[8:]) != 1 ||
-		binary.LittleEndian.Uint16(b[12:]) != 0 || (binary.LittleEndian.Uint32(b[64:]) != 1 && binary.LittleEndian.Uint32(b[64:]) != 2) || !bytes.Equal(b[68:], make([]byte, 12)) {
+		binary.LittleEndian.Uint16(b[12:]) != 0 || (binary.LittleEndian.Uint32(b[64:]) != 1 && binary.LittleEndian.Uint32(b[64:]) != 2 && binary.LittleEndian.Uint32(b[64:]) != 3) || !bytes.Equal(b[68:], make([]byte, 12)) {
 		return h, errors.New("incompatible hostname bootstrap envelope")
 	}
-	if binary.LittleEndian.Uint32(b[64:]) == 2 {
-		h.Profile = 2
+	if binary.LittleEndian.Uint32(b[64:]) >= 2 {
+		h.Profile = binary.LittleEndian.Uint32(b[64:])
 	}
 	h.Kind, h.Count = binary.LittleEndian.Uint16(b[10:]), binary.LittleEndian.Uint16(b[14:])
 	copy(h.Nonce[:], b[16:32])
@@ -147,7 +147,7 @@ func serveBootstrap(c *net.UnixConn, readerUID uint32, instance [16]byte, r *aut
 		return err
 	}
 	h, err := decodeBootstrap(data)
-	if err != nil || h.Profile != 2 || h.Kind != 1 || h.Count != 0 || len(fds) != 0 || h.Nonce == [16]byte{} || h.Instance != [16]byte{} || h.Manifest != (authorityManifest{}) {
+	if err != nil || h.Profile != 3 || h.Kind != 1 || h.Count != 0 || len(fds) != 0 || h.Nonce == [16]byte{} || h.Instance != [16]byte{} || h.Manifest != (authorityManifest{}) {
 		return errors.New("invalid hostname bootstrap request")
 	}
 	r.mu.RLock()
@@ -194,7 +194,7 @@ func receiveAuthority(c *net.UnixConn, deadline time.Time) (_ *authorityReader, 
 		return nil, instance, err
 	}
 	defer unix.Close(pidfd)
-	request := bootstrapHeader{Kind: 1, Profile: 2}
+	request := bootstrapHeader{Kind: 1, Profile: 3}
 	if _, err := rand.Read(request.Nonce[:]); err != nil {
 		return nil, instance, err
 	}

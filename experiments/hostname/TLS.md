@@ -25,10 +25,13 @@ For both IPv4 and IPv6, the matrix fixes TLS 1.2 or TLS 1.3 and checks:
 - Later TLS writes leave the committed connection on its original chain. The
   first-send authority can be revoked without interrupting an established relay.
 
-Each IP-family run has fourteen TLS cases: eight successful application
-exchanges and six deliberate certificate/hostname/pin rejections. It also reruns
-the service confinement, missing/stale registration, kill-switch, restart,
-disable/re-enable and target-exit checks with SELinux enforcing.
+The [profile-3 extension](RETRIES.md) adds, for both TLS versions, a
+ClientHello larger than the historical 4 KiB limit and an exchange whose
+ClientHello needs real nonblocking retries. Each IP-family run therefore has
+eighteen TLS cases: twelve successful application exchanges and six deliberate
+certificate/hostname/pin rejections. It also reruns the service confinement,
+missing/stale registration, kill-switch, restart, disable/re-enable and
+target-exit checks with SELinux enforcing.
 
 ## Fixture commands
 
@@ -55,6 +58,9 @@ keys or application bytes; the observer and reader gain no such access.
 This proves completed TLS for the exact supported OpenSSL profile and controlled
 TCP REDIRECT path. It does not establish browser compatibility, encrypted DNS,
 ECH, resumption, HTTP workloads, other send shapes, TUN/TPROXY, throughput or a
-production latency budget. The observer still admits only the sole first write
-of at most 4096 bytes; later sends revoke discovery authority. No production
-BPF program, reader contract or Mihomo behavior changes are needed for this test.
+production latency budget. The observer admits only one initial ClientHello
+window and verified retries of its remaining bytes, as defined by
+[profile 3](../../hostname/PROFILE3.md); unsupported later sends revoke
+discovery authority. Later application writes on an already committed
+connection are relayed normally. The service test needs no Mihomo behavior
+changes beyond the optional reader.

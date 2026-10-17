@@ -1,5 +1,10 @@
 # Excluding ambiguous send ordering
 
+The current [profile-3 follow-up](RETRIES.md) supersedes this historical
+sole-write/4 KiB restriction with one immutable ClientHello window and verified
+retries within its remaining bytes. The earlier evidence and limits below
+describe the original experiment.
+
 The current [profile-2 reclamation follow-up](RECLAMATION.md) supersedes the
 permanent-allocation limit described in this historical experiment. Live guards
 remain monotonic; only final release plus drained callback leases permits deletion.

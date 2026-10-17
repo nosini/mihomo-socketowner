@@ -74,8 +74,19 @@ func TestReclaimProfileEnvelope(t *testing.T) {
 	if err != nil || got != h {
 		t.Fatalf("reclaim envelope: %+v, %v", got, err)
 	}
-	wire[64] = 3
+	wire[64] = 4
 	if _, err := decodeBootstrap(wire); err == nil {
 		t.Fatal("unknown profile accepted")
+	}
+}
+
+func TestInitialWindowProfileEnvelope(t *testing.T) {
+	h := bootstrapHeader{Kind: 2, Count: 4, Profile: 3}
+	wire := h.encode()
+	if wire[64] != 3 {
+		t.Fatalf("wrong profile: %x", wire)
+	}
+	if got, err := decodeBootstrap(wire); err != nil || got != h {
+		t.Fatalf("initial-window envelope: %+v %v", got, err)
 	}
 }

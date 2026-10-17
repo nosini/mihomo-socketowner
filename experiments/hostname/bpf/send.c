@@ -33,7 +33,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_SK_STORAGE);
 	__uint(map_flags, BPF_F_NO_PREALLOC);
 	__type(key, int);
-	__type(value, struct send_evidence);
+	__type(value, struct send_scope_state);
 } send_scope SEC(".maps");
 
 struct {
@@ -43,12 +43,10 @@ struct {
 	__type(value, struct observation);
 } send_snapshots SEC(".maps");
 
-// Monotonic, non-evicting state: 0 = no attempt, 1 = exactly one attempt,
-// 3 = permanently excluded (ambiguous, unsupported, or retired). A second
-// send is excluded even if sequential or identically named: TCP may still hold
-// bytes from the first. Profile 2 deletes only after final socket release
-// and after every callback holding a guard pointer has left. No live cookie
-// is reset, replaced or evicted.
+// Monotonic lifetime eligibility: 0 = no initial attempt, 1 = one immutable
+// initial window (including verified retries), 3 = permanently excluded.
+// Live entries are never reset or evicted. Final-release callback leases
+// protect both this guard and the private byte-window hash from stale pointers.
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 256);
@@ -56,6 +54,23 @@ struct {
 	__type(key, __u64);
 	__type(value, __u64);
 } send_guards SEC(".maps");
+
+// Captured bytes are allocated before observation starts, never as a large
+// atomic socket-local allocation. All pointers use the socket's same lease.
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 256);
+	__uint(map_flags, BPF_F_RDONLY);
+	__type(key, __u64);
+	__type(value, struct send_evidence);
+} send_windows SEC(".maps");
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__uint(map_flags, BPF_F_RDONLY | BPF_F_RDONLY_PROG);
+	__type(key, __u32);
+	__type(value, struct send_evidence);
+} empty_window SEC(".maps");
 
 // A socket-local lease prevents a preallocated hash slot being recycled while
 // an older callback still holds its value pointer. Retirement blocks new leases;
@@ -70,8 +85,14 @@ static __always_inline void remove_guard(__u64 cookie, __u64 *publication)
 		save_publication_error(error);
 		publication_fail(publication);
 	}
+	__u64 window_key = (fault_mask() & FAULT_WINDOW_DELETE) ? 0 : cookie;
+	error = bpf_map_delete_elem(&send_windows, &window_key);
+	if (error) {
+		save_publication_error(error);
+		publication_fail(publication);
+	}
 }
-static __always_inline int enter_send(struct send_evidence *e, __u64 *publication)
+static __always_inline int enter_send(struct send_scope_state *e, __u64 *publication)
 {
 	for (int i = 0; i < 16; i++) {
 		__u64 old = *(volatile __u64 *)&e->callbacks;
@@ -85,7 +106,7 @@ static __always_inline int enter_send(struct send_evidence *e, __u64 *publicatio
 	publication_fail(publication);
 	return 0;
 }
-static __always_inline void leave_send(struct send_evidence *e, __u64 cookie,
+static __always_inline void leave_send(struct send_scope_state *e, __u64 cookie,
 	__u64 *publication)
 {
 	__u64 old = __sync_fetch_and_sub(&e->callbacks, 1);
@@ -93,7 +114,7 @@ static __always_inline void leave_send(struct send_evidence *e, __u64 cookie,
 		remove_guard(cookie, publication);
 }
 
-static __always_inline void retire_send(struct send_evidence *e, __u64 cookie,
+static __always_inline void retire_send(struct send_scope_state *e, __u64 cookie,
 	__u64 *publication)
 {
 	__u64 old = __sync_fetch_and_or(&e->callbacks, SEND_RETIRED);
@@ -118,7 +139,11 @@ int seed_send(struct bpf_sock *sk)
 			(fault_mask() & FAULT_GUARD_INSERT) ? BPF_EXIST : BPF_NOEXIST);
 		if (error)
 			save_publication_error(error);
-		if (!cookie || seeded || error ||
+		struct send_evidence *empty = bpf_map_lookup_elem(&empty_window, &zero);
+		long window_error = empty ? bpf_map_update_elem(&send_windows, &cookie, empty,
+	  (fault_mask() & FAULT_WINDOW_INSERT) ? BPF_EXIST : BPF_NOEXIST) : -1;
+		if (window_error) save_publication_error(window_error);
+		if (!cookie || seeded || error || window_error ||
 		    !bpf_sk_storage_get(&send_scope, sk, 0,
 			BPF_SK_STORAGE_GET_F_CREATE | ((fault_mask() & FAULT_SCOPE) ? 2 : 0)))
 			publication_fail(publication);
@@ -132,7 +157,7 @@ int seed_send(struct bpf_sock *sk)
 SEC("cgroup/sock_release")
 int release_send(struct bpf_sock *sk)
 {
-	struct send_evidence *e = bpf_sk_storage_get(&send_scope, sk, 0, 0);
+	struct send_scope_state *e = bpf_sk_storage_get(&send_scope, sk, 0, 0);
 	if (!e)
 		return 1;
 	__u64 *publication = publication_begin();
@@ -150,7 +175,7 @@ int lifetime_send(struct bpf_sock_ops *ctx)
 	    (ctx->op != BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB && ctx->op != BPF_SOCK_OPS_STATE_CB))
 		return 1;
 	struct bpf_sock *sk = ctx->sk;
-	struct send_evidence *evidence = sk ? bpf_sk_storage_get(&send_scope, sk, 0, 0) : 0;
+	struct send_scope_state *evidence = sk ? bpf_sk_storage_get(&send_scope, sk, 0, 0) : 0;
 	if (!evidence)
 		return 1;
 	__u64 *publication = publication_begin();
@@ -191,7 +216,7 @@ static __always_inline int expected_return(__u64 slot, __u64 expected)
 	return !READ_USER(actual, slot, 0) && actual == expected;
 }
 
-// Deliberately fixed to one reviewed libc/OpenSSL path. Never scan the stack
+// Fixed to reviewed paths in one hashed libc/OpenSSL build. Never scan the stack
 // for plausible pointers or accept a partially matched call chain.
 static __always_inline __u64 sending_ssl(struct pt_regs___kernel *regs)
 {
@@ -233,6 +258,24 @@ static __always_inline __u64 sending_ssl(struct pt_regs___kernel *regs)
 	    READ_USER(buffer_bp, sp, 32))
 		return 0;
 	sp += 64;
+	// Large pending records pass through buffer_write rather than buffer_ctrl.
+	// Each fixed BIO frame is checked; the record-flush frame saved its
+	// SSL_CONNECTION caller's rbx at +8. No stack scan or cached setter is used.
+	if (expected_return(sp + 24, crypto_base + 0x174f2e) ||
+	    expected_return(sp + 24, crypto_base + 0x174fd7)) {
+		sp += 32;
+		if (!expected_return(sp + 56, crypto_base + 0x17aeeb)) return 0;
+		sp += 64;
+		if (!expected_return(sp + 8, crypto_base + 0x178ec0)) return 0;
+		sp += 16;
+		if (!expected_return(sp + 56, crypto_base + 0x1794e6)) return 0;
+		sp += 64;
+		if (!expected_return(sp + 24, ssl_base + 0xc00b1)) return 0;
+		sp += 32;
+		if ((!expected_return(sp + 56, ssl_base + 0xb6d64) &&
+	      !expected_return(sp + 56, ssl_base + 0xb6ba6)) || READ_USER(ssl, sp, 8)) return 0;
+		return ssl;
+	}
 	if (!expected_return(sp + 24, crypto_base + 0x174adf))
 		return 0;
 	sp += 32;
@@ -258,7 +301,7 @@ static __always_inline int capture_send(struct send_evidence *evidence,
 	struct tcp_sock *tcp = (void *)sk;
 	__u32 sequence, next, unacked;
 	__u64 buffer = 0, count = 0;
-	if (evidence->lifetime_ready != 1 || size <= 0 || size > SEND_BYTES_MAX ||
+	if (size <= 0 || size > SEND_BYTES_MAX ||
 	    BPF_CORE_READ(sk, __sk_common.skc_state) != 1 ||
 	    BPF_CORE_READ(msg, msg_iter.iter_type) != bpf_core_enum_value(enum iter_type, ITER_UBUF) ||
 	    BPF_CORE_READ(msg, msg_iter.data_source) != 1 ||
@@ -270,8 +313,22 @@ static __always_inline int capture_send(struct send_evidence *evidence,
 	    BPF_CORE_READ_INTO(&next, tcp, snd_nxt) ||
 	    BPF_CORE_READ_INTO(&unacked, tcp, snd_una) || sequence != next || sequence != unacked)
 		return 0;
+	// The wider record-write call path must begin with one complete plaintext
+	// ClientHello record. Header checks only restrict scope; the live SSL name
+	// remains the sole hostname source. No SNI parsing or decryption is used.
+	__u8 header[9];
+	if (size < sizeof(header) || bpf_probe_read_user(header, sizeof(header), (void *)buffer) ||
+	    header[0] != 0x16 || header[1] != 3 || header[2] > 3 || header[5] != 1 ||
+	    (((__u32)header[3] << 8) | header[4]) != size - 5 ||
+	    (((__u32)header[6] << 16) | ((__u32)header[7] << 8) | header[8]) != size - 9)
+		return 0;
 	if (bpf_probe_read_user(evidence->bytes, size, (void *)buffer))
 		return 0;
+	if (evidence->bytes[0] != header[0] || evidence->bytes[1] != header[1] ||
+	    evidence->bytes[2] != header[2] || evidence->bytes[3] != header[3] ||
+	    evidence->bytes[4] != header[4] || evidence->bytes[5] != header[5] ||
+	    evidence->bytes[6] != header[6] || evidence->bytes[7] != header[7] ||
+	    evidence->bytes[8] != header[8]) return 0;
 	if (BPF_CORE_READ_INTO(&next, tcp, write_seq) || next != sequence ||
 	    BPF_CORE_READ_INTO(&next, tcp, snd_nxt) || next != sequence ||
 	    BPF_CORE_READ_INTO(&unacked, tcp, snd_una) || unacked != sequence)
@@ -281,12 +338,79 @@ static __always_inline int capture_send(struct send_evidence *evidence,
 	return 1;
 }
 
+// Retry validation never extends or overwrites the first attempted byte window.
+// It compares the actual pending syscall buffer to the remaining original slice.
+struct retry_context {
+	struct send_evidence *evidence;
+	__u64 buffer;
+	__u32 offset, len;
+	int matched;
+};
+static long retry_chunk(__u32 chunk, void *opaque)
+{
+	struct retry_context *ctx = opaque;
+	__u32 offset = chunk * 32;
+	if (offset >= ctx->len) return 1;
+	__u32 count = ctx->len - offset;
+	if (count > 32) count = 32;
+	__u8 bytes[32] = {};
+	if (bpf_probe_read_user(bytes, count, (void *)(ctx->buffer + offset))) {
+		ctx->matched = 0;
+		return 1;
+	}
+#pragma clang loop unroll(disable)
+	for (int i = 0; i < 32; i++) {
+		if (i >= count) break;
+		__u32 index = ctx->offset + offset + i;
+		if (index >= SEND_BYTES_MAX || bytes[i] != ctx->evidence->bytes[index]) {
+			ctx->matched = 0;
+			return 1;
+		}
+	}
+	return 0;
+}
+static __always_inline int capture_retry(struct send_evidence *e,
+	struct sock *sk, struct msghdr *msg, struct pt_regs___kernel *regs,
+	int size, __u64 ssl, struct observation *o)
+{
+	if (__sync_val_compare_and_swap(&e->ready, 1, 1) != 1 || e->ssl != ssl ||
+					e->origin.len != o->len || e->origin.fd != o->fd ||
+					!e->len || e->len > SEND_BYTES_MAX || size <= 0 || size > SEND_BYTES_MAX ||
+					BPF_CORE_READ(sk, __sk_common.skc_state) != 1)
+		return 0;
+#pragma clang loop unroll(disable)
+	for (int i = 0; i < 256; i++) {
+		if (e->origin.hostname[i] != o->hostname[i]) return 0;
+	}
+	__u64 buffer = 0, count = 0;
+	__u32 sequence;
+	struct tcp_sock *tcp = (void *)sk;
+	if (BPF_CORE_READ(msg, msg_iter.iter_type) != bpf_core_enum_value(enum iter_type, ITER_UBUF) ||
+					BPF_CORE_READ(msg, msg_iter.data_source) != 1 ||
+					BPF_CORE_READ(msg, msg_iter.iov_offset) != 0 ||
+					BPF_CORE_READ_INTO(&buffer, msg, msg_iter.ubuf) ||
+					BPF_CORE_READ_INTO(&count, msg, msg_iter.count) ||
+					buffer != BPF_CORE_READ(regs, si) || count != BPF_CORE_READ(regs, dx) || count != size ||
+					BPF_CORE_READ_INTO(&sequence, tcp, write_seq))
+		return 0;
+	__u32 offset = sequence - e->sequence;
+	if (offset >= e->len || size > e->len - offset) return 0;
+	struct retry_context ctx = {.evidence=e, .buffer=buffer, .offset=offset, .len=size, .matched=1};
+	if (bpf_loop(SEND_BYTES_MAX / 32, retry_chunk, &ctx, 0) < 0 || !ctx.matched ||
+					BPF_CORE_READ(tcp, write_seq) != sequence)
+		return 0;
+	// A retry cannot refresh the original observation's freshness budget.
+	o->boot_ns = e->origin.boot_ns;
+	return 1;
+}
+
 SEC("lsm/socket_sendmsg")
 int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	     int ret)
 {
 	struct sock *sk;
 	struct send_evidence *evidence;
+	struct send_scope_state *scope;
 	__u64 *publication;
 	struct observation o = {};
 	struct task_struct *task;
@@ -297,35 +421,37 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	if (ret)
 		return ret;
 	sk = socket->sk;
-	if (!sk || !(evidence = bpf_sk_storage_get(&send_scope, sk, 0, 0)))
+	if (!sk || !(scope = bpf_sk_storage_get(&send_scope, sk, 0, 0)))
 		return 0;
 	publication = publication_begin();
 	if (!publication)
 		return 0;
-	if (!enter_send(evidence, publication)) {
+	if (!enter_send(scope, publication)) {
 		publication_end(publication);
 		return 0;
 	}
 	o.cookie = bpf_get_socket_cookie(sk);
 	__u64 *guard = bpf_map_lookup_elem(&send_guards, &o.cookie);
-	if (!guard) {
+	evidence = bpf_map_lookup_elem(&send_windows, &o.cookie);
+	if (!guard || !evidence) {
 		publication_fail(publication);
-		leave_send(evidence, o.cookie, publication);
+		leave_send(scope, o.cookie, publication);
 		publication_end(publication);
 		return 0;
 	}
 	// Count the attempt before inspecting userspace, including unsupported and
-	// failed writes. CAS chooses at most one first attempt; OR never restores
-	// eligibility when another writer finishes out of order.
+	// failed writes. CAS chooses at most one initial capture. Later attempts
+	// can only validate its immutable remaining slice; no path clears exclusion.
 	int first = __sync_val_compare_and_swap(guard, 0, 1) == 0;
-	if (!first)
-		__sync_fetch_and_or(guard, 3);
+	if (first) record_retry_test(0);
+	int allowed = 0;
 	o.boot_ns = bpf_ktime_get_boot_ns();
 	o.tgid = bpf_get_current_pid_tgid() >> 32;
 	o.fd = -1;
 	// Unknown paths on a tracked socket actively invalidate the last name.
 	o.pad = 1;
-	if (o.tgid != target_tgid || size <= 0)
+	if (o.tgid != target_tgid || size <= 0 ||
+	    (!first && *(volatile __u64 *)guard != 1))
 		goto publish;
 	task = bpf_get_current_task_btf();
 	regs = (void *)bpf_task_pt_regs(task);
@@ -345,7 +471,7 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 	    READ_USER(fd, bio, BIO_NUM) || fd < 0 || fd != BPF_CORE_READ(regs, di))
 		goto publish;
 	o.fd = fd;
-	if (first && !capture_send(evidence, sk, msg, regs, size)) {
+	if (first && (scope->lifetime_ready != 1 || !capture_send(evidence, sk, msg, regs, size))) {
 		o.pad = 6;
 		goto publish;
 	}
@@ -362,9 +488,24 @@ int BPF_PROG(observe_send, struct socket *socket, struct msghdr *msg, int size,
 			__builtin_memset(o.hostname, 0, sizeof(o.hostname));
 		}
 	}
-	if (o.len)
-		o.pad = 0;
+	if (o.len) {
+		if (first) {
+			evidence->ssl = ssl;
+			__builtin_memcpy(&evidence->origin, &o, sizeof(o));
+			allowed = __sync_val_compare_and_swap(&evidence->ready, 0, 1) == 0;
+		} else {
+			allowed = capture_retry(evidence, sk, msg, regs, size, ssl, &o);
+			if (allowed) record_retry_test(1);
+		}
+		if (allowed) o.pad = 0;
+	}
 publish:
+	if (!allowed) {
+		if (!first) __sync_fetch_and_or(guard, 3);
+		record_retry_test(2);
+		o.len = 0;
+		__builtin_memset(o.hostname, 0, sizeof(o.hostname));
+	}
 	{
 		long error = bpf_map_update_elem(&send_snapshots, &o.cookie, &o,
 			(fault_mask() & FAULT_SEND) ? BPF_NOEXIST :
@@ -374,7 +515,7 @@ publish:
 			publication_fail(publication);
 		}
 	}
-	leave_send(evidence, o.cookie, publication);
+	leave_send(scope, o.cookie, publication);
 	publication_end(publication);
 	return 0;
 }
@@ -400,24 +541,26 @@ int observe_flow(struct __sk_buff *skb)
 {
 	struct bpf_sock *sk = skb->sk;
 	struct send_evidence *evidence;
+	struct send_scope_state *scope;
 	__u64 *publication;
 	struct packet_info packet = {};
 	struct flow_observation record = {};
 	struct observation *name;
 
 	if (!sk || !(sk = bpf_sk_fullsock(sk)) ||
-	    !(evidence = bpf_sk_storage_get(&send_scope, sk, 0, 0)))
+	    !(scope = bpf_sk_storage_get(&send_scope, sk, 0, 0)))
 		return 1;
 	publication = publication_begin();
 	if (!publication)
 		return 1;
-	if (!enter_send(evidence, publication)) {
+	if (!enter_send(scope, publication)) {
 		publication_end(publication);
 		return 1;
 	}
 	record.cookie = bpf_get_socket_cookie(skb);
 	__u64 *guard = bpf_map_lookup_elem(&send_guards, &record.cookie);
-	if (!guard) {
+	evidence = bpf_map_lookup_elem(&send_windows, &record.cookie);
+	if (!guard || !evidence) {
 		publication_fail(publication);
 		goto done;
 	}
@@ -448,7 +591,7 @@ int observe_flow(struct __sk_buff *skb)
 		}
 	}
 done:
-	leave_send(evidence, record.cookie, publication);
+	leave_send(scope, record.cookie, publication);
 	publication_end(publication);
 	return 1;
 }
@@ -460,7 +603,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, 1);
 	__type(key, __u32);
-	__type(value, struct send_evidence);
+	__type(value, struct send_scope_state);
 } reclaim_test_state SEC(".maps");
 SEC("socket")
 int test_reclaim(struct __sk_buff *skb)
@@ -468,7 +611,7 @@ int test_reclaim(struct __sk_buff *skb)
 	__u32 zero = 0;
 	__u8 command;
 	__u64 cookie = ~0ULL;
-	struct send_evidence *e = bpf_map_lookup_elem(&reclaim_test_state, &zero);
+	struct send_scope_state *e = bpf_map_lookup_elem(&reclaim_test_state, &zero);
 	if (!e || bpf_skb_load_bytes(skb, 0, &command, 1)) return 0;
 	if (command == 3) {
 		__u64 *publication = bpf_map_lookup_elem(&publication_state, &zero);
@@ -482,7 +625,9 @@ int test_reclaim(struct __sk_buff *skb)
 	int result = 1;
 	if (command == 0) {
 		__u64 initial = 1;
-		if (bpf_map_update_elem(&send_guards, &cookie, &initial, BPF_NOEXIST))
+		struct send_evidence *empty = bpf_map_lookup_elem(&empty_window, &zero);
+		if (!empty || bpf_map_update_elem(&send_windows, &cookie, empty, BPF_NOEXIST) ||
+	     bpf_map_update_elem(&send_guards, &cookie, &initial, BPF_NOEXIST))
 			publication_fail(publication);
 	} else if (command == 1) {
 		result = enter_send(e, publication);

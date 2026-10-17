@@ -14,7 +14,7 @@ counterexample without depending on handshake uprobes or descriptor-table
 traversal. It also tests full flow identity through IPv4/IPv6 REDIRECT source-port
 collisions. Its [publication guard](PUBLICATION.md) rejects stale records after
 map-update or socket-storage failure. A [send-order guard](SEND_ORDER.md) rejects
-every socket after its second send attempt, following a reproduced corked-write
+unsupported later attempts, following a reproduced corked-write
 counterexample. Its [packet comparison](PACKET.md) matches emitted payloads to
 captured first-write bytes and TCP sequence positions. Its
 [lifetime checks](LIFETIME.md) retire closed sockets and revoke stopped/replaced
@@ -24,6 +24,11 @@ open; both experiments still keep all records private.
 Later steps separate the [observer and reader](AUTHORITY.md), authenticate the
 [bootstrap](BOOTSTRAP.md) and connect it to Mihomo's [native lookup](NATIVE.md).
 To run the observer for Mihomo, use the [observer command](OBSERVER.md).
+
+The current [profile-3 retry follow-up](RETRIES.md) admits one complete initial
+ClientHello record up to 16 KiB and verified retries of its remaining bytes on
+the same live SSL connection. Final-release reclamation bounds retained sockets
+to 256. Historical experiment details below retain their original limits.
 
 ## Running
 

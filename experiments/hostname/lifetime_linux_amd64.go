@@ -77,7 +77,7 @@ func newObserverSession(p *probe) (_ *observerSession, err error) {
 			s.close()
 		}
 	}()
-	for _, name := range []string{"publication_state", "send_guards", "send_snapshots", "send_flows", "send_scope"} {
+	for _, name := range []string{"publication_state", "send_guards", "send_snapshots", "send_flows", "send_scope", "send_windows", "empty_window"} {
 		m := p.collection.Maps[name]
 		id, err := mapIdentity(m)
 		if err != nil {

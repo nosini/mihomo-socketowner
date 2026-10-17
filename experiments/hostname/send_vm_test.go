@@ -115,7 +115,7 @@ func TestVMSendUnknownPathInvalidates(t *testing.T) {
 			}
 			f.command("%s %d", op, c.slot)
 			// Inspect diagnostic invalidation independently of the stricter
-			// reader, which now rejects every second send on this socket.
+			// reader, which rejects unsupported writes and out-of-window retries.
 			o, err := readPublished(f.probe.publicationWord, func(out *observation) error {
 				return f.probe.collection.Maps["send_snapshots"].Lookup(c.cookie, out)
 			})

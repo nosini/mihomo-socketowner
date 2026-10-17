@@ -7,9 +7,14 @@ experiment, packaged as a command. It is separate from `socketowner`;
 process lookup does not need it, and it does not need process lookup.
 
 This is still an experiment. It supports exactly one verified OpenSSL build
-and one target process per observer, and its raw diagnostic maps are not standalone routing evidence. The optional
+and one target process per observer, and its raw diagnostic maps are not
+standalone routing evidence. The optional
 [hostname contract v1](../../docs/hostname-interface.md) defines the authenticated
-reader bundle and its lifetime checks.
+reader bundle and its lifetime checks. The current observer uses
+[profile 3](../../hostname/PROFILE3.md): each socket's discovery covers one
+complete initial ClientHello record of at most 16 KiB, including verified
+retries of its remaining bytes. Mihomo's optional reader must be built from a
+reader module that also requires profile 3.
 
 ## Building
 
@@ -112,11 +117,12 @@ Revocation always comes first: an already connected reader returns unknown
 before any program is detached. Each start is a new instance with new maps.
 Sockets the target opened earlier stay unknown, including their first send.
 
-The profile-2 send-guard table has 256 entries, reclaimed only after final
-socket-file release and after older guard-pointer callbacks drain. The target's
-257th concurrently retained TCP socket therefore ends the instance. Restarting
-the observer, for example with `Restart=on-failure`, gives it a fresh table; connections meanwhile
-use Mihomo's ordinary routing.
+The send-guard and private byte-window tables have 256 entries each. Entries
+are reclaimed only after final socket-file release and after older callbacks
+holding pointers into them drain. The target's 257th concurrently retained TCP
+socket therefore ends the instance. Restarting the observer, for example with
+`Restart=on-failure`, gives it fresh tables; connections meanwhile use Mihomo's
+ordinary routing.
 
 Startup recovery and `cleanup` use the journal described in
 [BOOTSTRAP.md](BOOTSTRAP.md#owned-lifecycle-and-recovery-journal). They never
@@ -166,8 +172,11 @@ test binaries built with the race detector:
   privileges; the service has a separate restricted domain and capability set.
 - Finding targets by itself. One observer follows one PID; a different
   OpenSSL build, Flatpak runtime or statically linked program is unsupported.
-- Broader send coverage beyond the sole first write. Final-release guard
-  reclamation is now covered by [profile 2](RECLAMATION.md).
+- Broader send coverage beyond the immutable initial ClientHello window.
+  [Profile 3](RETRIES.md) admits up to 16 KiB and verified same-SSL/name retries
+  inside its remaining bytes, retaining [final-release reclamation](RECLAMATION.md).
+  Rebuild the optional reader consumer and observer together; older profiles
+  cannot bootstrap this observer.
 - Published releases of the [separate reader module](../../hostname/README.md).
   Its v1 contract now freezes the existing bootstrap/profile layout.
 - `exec` by the target is not detected. After it, libraries normally load at
