@@ -1,13 +1,13 @@
 # Mihomo: application hostname discovery with eBPF
 
-Design assessment and handoff for future implementation.
+Design and implementation record for optional application hostname discovery.
 
 | Item | Status |
 | --- | --- |
 | Prepared | 2026-10-14 |
 | Project status | Milestone 1 in progress; experiment authorized and started 2026-10-16 |
-| Work completed | Source assessment; isolated OpenSSL snapshot experiment and controlled VM tests |
-| Work not completed | Routing-safe correlation, routing/service integration, privilege validation and end-to-end runtime tests |
+| Work completed | Verified first-send prototype; authenticated bootstrap; guarded reader consumption through real REDIRECT routing |
+| Work not completed | Broader send/reinjection coverage; stable reader ABI and operator/service integration; full TLS/browser workloads |
 | Intended reader | An agent returning to this workspace without the original conversation |
 
 This document preserves the user's objective and the resulting assessment. The
@@ -107,8 +107,16 @@ DNS hints, hosts overrides, sniffing and dial encoding. The expanded supervised
 REDIRECT matrix uses the real DOMAIN matcher rather than a rule-input clone.
 There is still no production caller, reader interface or enable setting.
 
+The [consumption follow-up](../experiments/hostname/CONSUMPTION.md) connects the
+authenticated reader directly to capability-free Mihomo in the VM. It binds
+tentative names to the original reader/flow/record and rechecks them after rule
+matching, before committing the outbound. Failure restores ordinary metadata
+and routing policy. Both IP families and process modes pass crash, revocation,
+second-send, eviction, expiry, reader-close and restart cases. The final guarded
+read is the commitment point; a subsequent crash leaves that route fixed.
+
 Milestone 1 remains open for broader send coverage and reinjection. Stable
-optional reader records, final-consumption authority checks, production entry
+optional reader records, production entry
 points and service confinement remain unimplemented. These diagnostic maps must not become
 a stable public routing interface without that work.
 

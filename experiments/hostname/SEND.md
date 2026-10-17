@@ -188,8 +188,10 @@ capabilities and service confinement remain unverified.
 3. **Production routing metadata.** The supervised [REDIRECT test](ROUTING.md)
    now proves bounded lookup and destination preservation at the real Mihomo
    tunnel. Mihomo's internal metadata defines provenance and source precedence,
-   with local Fake-IP/conflict tests and VM sniff/hosts cases. Final-consumption
-   authority and a safe external reader still need integration and validation.
+   with local Fake-IP/conflict tests and VM sniff/hosts cases. The
+   [consumption follow-up](CONSUMPTION.md) connects authenticated reader authority
+   at final matching. A stable external reader contract and service integration
+   remain open.
 
 The live-frame mechanism solves the reproduced stale handshake-cache case for
 the tested path. It is a foundation for milestone 1, not completion of it.

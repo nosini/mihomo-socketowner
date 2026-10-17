@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -41,6 +42,10 @@ type routeVMHelper struct {
 }
 
 func newRouteVMHelper(t *testing.T, network string, budget int, processMode, policy string) *routeVMHelper {
+	return newRouteVMHelperEndpoint(t, network, budget, processMode, policy, "")
+}
+
+func newRouteVMHelperEndpoint(t *testing.T, network string, budget int, processMode, policy, endpoint string) *routeVMHelper {
 	t.Helper()
 	path := os.Getenv("HOSTNAME_VM_MIHOMO")
 	if path == "" {
@@ -65,6 +70,10 @@ func newRouteVMHelper(t *testing.T, network string, budget int, processMode, pol
 		address = "[::1]:0"
 	}
 	h.cmd.Env = append(os.Environ(), "HOSTNAME_VM_ROUTE_HELPER=1", "HOSTNAME_VM_ROUTE_BUDGET_MS="+strconv.Itoa(budget), "HOSTNAME_VM_ROUTE_PROCESS="+processMode, "HOSTNAME_VM_ROUTE_LISTEN="+address, "HOSTNAME_VM_ROUTE_POLICY="+policy)
+	if endpoint != "" {
+		h.cmd.Env = append(h.cmd.Env, "HOSTNAME_VM_ROUTE_ENDPOINT="+endpoint)
+		h.cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 1000, Gid: 1000}}
+	}
 	h.cmd.ExtraFiles = []*os.File{child}
 	h.cmd.Stdout, h.cmd.Stderr = &h.log, &h.log
 	err = h.cmd.Start()
@@ -180,6 +189,10 @@ func TestVMHostnameRoutingDeadline(t *testing.T) {
 						if e.Kind == "dial" {
 							dial = e
 							break
+						}
+						if e.Kind == "validate" {
+							h.reply(t, lookup())
+							continue
 						}
 						if e.Kind != "lookup" {
 							t.Fatalf("unexpected event: %+v", e)

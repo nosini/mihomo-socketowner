@@ -55,9 +55,11 @@ skips routing marks for addresses that are not global unicast, so a routing-mark
 exclusion alone would reinject the proxy's loopback connection. This test does
 not establish support for arbitrary interception or reinjection policies.
 
-This IPC is an experiment seam, not a service contract. A copied name is consumed
-once under controlled supervision; reader authority, observer crash/reconnect,
-revocation across processes and least-privilege service operation remain open.
+This IPC is an experiment seam, not a service contract. Its copied name now
+requires a fresh supervised validation after matching. The separate
+[consumption follow-up](CONSUMPTION.md) uses authenticated bootstrap and a direct
+reader in capability-free Mihomo for observer crash/reconnect and revocation.
+Least-privilege service operation remains open.
 Do not turn this bridge into a production consumer of the diagnostic maps.
 
 ## Validation, 2026-10-16
@@ -133,7 +135,9 @@ The [authority experiment](AUTHORITY.md) tests private observer crash/reconnect
 and read-only access in separate processes. The [bootstrap follow-up](BOOTSTRAP.md)
 adds an authenticated experimental exchange and cleanup owner. Mihomo's internal
 metadata now defines application-name provenance and precedence alongside Fake-IP,
-explicit names and sniffing. A stable reader interface, freshness/revocation at
-final route consumption and service integration remain before production use.
+explicit names and sniffing. A stable reader interface and service integration
+remain before production use. The [consumption follow-up](CONSUMPTION.md) adds
+final-consumption validation and rollback with the authenticated reader in
+capability-free Mihomo.
 Broader send paths and reinjection remain outside the proved
 first-write path; browser/encrypted-DNS/ECH support remains a later milestone.
