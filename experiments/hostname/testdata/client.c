@@ -215,8 +215,8 @@ int main(int argc, char **argv)
 		int i = -1;
 		check(sscanf(line, "%31s", op) == 1, "command");
 		if (!strcmp(op, "tiny-send") || !strcmp(op, "normal-send")) {
-	  tiny_send = !strcmp(op, "tiny-send");
-	  puts("ok"); continue;
+			tiny_send = !strcmp(op, "tiny-send");
+			puts("ok"); continue;
 		}
 		if (!strcmp(op, "source")) {
 			check(sscanf(line, "%*s %d", &source_port) == 1, "source port");
@@ -318,11 +318,6 @@ int main(int argc, char **argv)
 			size_t written = 0;
 			int ret = SSL_write_ex(c->ssl, "x", 1, &written);
 			printf("implicit %d %d %d\n", i, ret, SSL_get_error(c->ssl, ret));
-		} else if (!strcmp(op, "small-send")) {
-			int size = 1024, mss = 512;
-			check(setsockopt(c->fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == 0, "send buffer");
-			check(setsockopt(c->fd, IPPROTO_TCP, TCP_MAXSEG, &mss, sizeof(mss)) == 0, "TCP MSS");
-			puts("ok");
 		} else if (!strcmp(op, "large-alpn") || !strcmp(op, "retry-alpn") || !strcmp(op, "oversize-alpn")) {
 			unsigned char protocols[16384];
 			int count = !strcmp(op, "large-alpn") ? 16 : !strcmp(op, "retry-alpn") ? 40 : 64;
@@ -353,12 +348,12 @@ int main(int argc, char **argv)
 			}
 			puts("ok");
 		} else if (!strcmp(op, "rename")) {
-	  check(sscanf(line, "%*s %*d %511s", name) == 1, "rename");
-	  check(SSL_set_tlsext_host_name(c->ssl, name) == 1, "rename hostname");
-	  puts("ok");
+			check(sscanf(line, "%*s %*d %511s", name) == 1, "rename");
+			check(SSL_set_tlsext_host_name(c->ssl, name) == 1, "rename hostname");
+			puts("ok");
 		} else if (!strcmp(op, "mutate-write")) {
-	  BIO_set_callback_ex(SSL_get_wbio(c->ssl), mutate_write);
-	  puts("ok");
+			BIO_set_callback_ex(SSL_get_wbio(c->ssl), mutate_write);
+			puts("ok");
 		} else if (!strcmp(op, "fail")) {
 			BIO_set_callback_ex(SSL_get_wbio(c->ssl), reject_write);
 			handshake(&i);
